@@ -9,11 +9,11 @@ servers:
 paths:
   /api/client/fetch_messages:
     post:
-      summary: Fetch Messages (Modern API)
+      summary: Fetch Messages
       operationId: fetchMessages
       description: |
-        Checks for new incoming messages and synchronizes message history.
-        Maps to Matrix /sync.
+        Checks for new incoming messages by performing a Matrix /sync on behalf of the user.
+        Authentication is handled by the Application Service backend; the `password` field is ignored.
       requestBody:
         required: true
         content:
@@ -22,52 +22,39 @@ paths:
               type: object
               required:
                 - username
-                - password
               properties:
                 username:
                   type: string
-                  description: Matrix username (localpart or full ID).
+                  description: The full Matrix ID (e.g., @user:server.com) of the user to impersonate.
                 password:
                   type: string
-                  description: Matrix password.
+                  description: This field is ignored. Kept for client compatibility.
                 last_id:
                   type: string
-                  description: The sms_id of the last received message. Used for pagination/sync.
+                  description: The 'since' token from the last sync.
                 last_sent_id:
                   type: string
                   description: The sms_id of the last sent message.
                 device:
                   type: string
-                  description: Device identifier.
+                  description: Device identifier (e.g., 'ACROBITS').
       responses:
         '200':
           description: Successful sync
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  date:
-                    type: string
-                    format: date-time
-                    description: Current server time in RFC 3339.
-                  received_smss:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Message'
-                  sent_smss:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Message'
+                $ref: '#/components/schemas/FetchMessagesResponse'
         '401':
-          description: Authentication failed against Matrix server.
+          description: Authentication failed (e.g., user not in AS namespace).
   
   /api/client/send_message:
     post:
       summary: Send Message
       operationId: sendMessage
       description: |
-        Sends an outgoing message. Maps to Matrix /send.
+        Sends an outgoing message on behalf of a user.
+        Authentication is handled by the Application Service backend; the `password` field is ignored.
       requestBody:
         required: true
         content:
@@ -76,19 +63,18 @@ paths:
               type: object
               required:
                 - from
-                - password
                 - sms_to
                 - sms_body
               properties:
                 from:
                   type: string
-                  description: Matrix username of the sender.
+                  description: The full Matrix ID (e.g., @user:server.com) of the user to impersonate.
                 password:
                   type: string
-                  description: Matrix password.
+                  description: This field is ignored. Kept for client compatibility.
                 sms_to:
                   type: string
-                  description: Recipient Matrix ID or phone number (if bridged).
+                  description: Recipient Matrix ID, Alias, or mapped phone number.
                 sms_body:
                   type: string
                   description: The message content.
@@ -110,30 +96,23 @@ paths:
                     type: string
                     description: The Matrix event ID of the sent message.
         '400':
-          description: Invalid request or Matrix error.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    description: Error description.
+          description: Invalid request or recipient.
+        '401':
+          description: Authentication failed (e.g., user not in AS namespace).
 
   /api/internal/map_sms_to_matrix:
     post:
       summary: Register or update an SMS-to-Matrix mapping
       description: |
-        Creates or overwrites the mapping between an SMS number (or bridged identifier) and
-        a Matrix room for a super-admin. Requires the `X-Super-Admin-Token` header and is
-        only accessible from localhost.
+        Creates or overwrites the mapping between an SMS number (or other identifier) and
+        a Matrix room. Requires the `X-Super-Admin-Token` header.
       parameters:
         - in: header
           name: X-Super-Admin-Token
           schema:
             type: string
           required: true
-          description: Super admin token for authentication.
+          description: The Application Service token (as_token).
       requestBody:
         required: true
         content:
@@ -151,20 +130,18 @@ paths:
           description: Invalid request payload.
         '401':
           description: Invalid admin token.
-        '403':
-          description: Mapping API only available from localhost.
     get:
       summary: Lookup an existing mapping
       description: |
-        Returns the stored Matrix handler for a previously mapped SMS number. Requires the
-        `X-Super-Admin-Token` header and must be called from localhost.
+        Returns the stored Matrix handler for a previously mapped identifier. Requires the
+        `X-Super-Admin-Token` header.
       parameters:
         - in: header
           name: X-Super-Admin-Token
           schema:
             type: string
           required: true
-          description: Super admin token for authentication.
+          description: The Application Service token (as_token).
         - in: query
           name: sms_number
           schema:
@@ -180,8 +157,6 @@ paths:
                 $ref: '#/components/schemas/MappingResponse'
         '401':
           description: Invalid admin token.
-        '403':
-          description: Mapping API only available from localhost.
         '404':
           description: No mapping exists for the requested identifier.
 
@@ -202,7 +177,7 @@ components:
           description: Sender address/ID.
         recipient:
           type: string
-          description: Recipient address/ID.
+          description: Recipient address/ID (Room ID).
         sms_text:
           type: string
           description: Message body.
@@ -212,6 +187,21 @@ components:
         stream_id:
           type: string
           description: Identifier for the conversation stream (Room ID).
+    FetchMessagesResponse:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date-time
+          description: Current server time in RFC 3339.
+        received_smss:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        sent_smss:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
     MappingRequest:
       type: object
       required:

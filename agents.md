@@ -22,7 +22,13 @@ The proxy translates Acrobits' proprietary HTTP API calls for messaging into sta
 - **Web Framework:** Standard Echo (v4) framework
 - **Matrix SDK:** `mautrix-go` (recommended)
 - **Testing:** Standard testing package with `testify/assert` and `testify/mock`
-- **Documentation:** OpenAPI 3.0 `docs/openapi.yaml`, readme files
+
+---
+
+## Documentation & Specs
+
+- **OpenAPI:** OpenAPI 3.0 `docs/openapi.yaml`, keep it up to date with implementation.
+- **README:** Overview, setup instructions, usage examples in `README.md`, keep it updated.
 
 ---
 

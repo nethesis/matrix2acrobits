@@ -5,46 +5,40 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
 )
-
-const defaultSessionTTL = 10 * time.Minute
 
 // Config configures the Matrix client wrapper.
 type Config struct {
 	HomeserverURL string
-	CacheTTL      time.Duration
+	AsUserID      id.UserID
+	AsToken       string
 	HTTPClient    *http.Client
 }
 
-// MatrixClient manages Matrix sessions keyed by username so we can cache access tokens.
+// MatrixClient is a client wrapper for performing Application Service actions.
+// Note: The underlying mautrix client is stateful for impersonation in this version.
+// A mutex is used to make operations thread-safe.
 type MatrixClient struct {
-	homeserver string
-	cacheTTL   time.Duration
-	httpClient *http.Client
-
-	mu       sync.RWMutex
-	sessions map[string]*session
+	cli *mautrix.Client
+	mu  sync.Mutex
 }
 
-type session struct {
-	client    *mautrix.Client
-	expiresAt time.Time
-}
-
-// NewClient creates a MatrixClient that can log in using username/password and cache the session per user.
+// NewClient creates a MatrixClient authenticated as an Application Service.
 func NewClient(cfg Config) (*MatrixClient, error) {
-	if strings.TrimSpace(cfg.HomeserverURL) == "" {
+	if cfg.HomeserverURL == "" {
 		return nil, errors.New("homeserver url is required")
 	}
-
-	ttl := cfg.CacheTTL
-	if ttl <= 0 {
-		ttl = defaultSessionTTL
+	if cfg.AsToken == "" {
+		return nil, errors.New("application service token (as_token) is required")
+	}
+	if cfg.AsUserID == "" {
+		return nil, errors.New("application service user ID (as_user_id) is required")
 	}
 
 	httpClient := cfg.HTTPClient
@@ -52,88 +46,78 @@ func NewClient(cfg Config) (*MatrixClient, error) {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 
+	// For v0.26.0, the AS token and user ID are passed to NewClient.
+	client, err := mautrix.NewClient(cfg.HomeserverURL, cfg.AsUserID, cfg.AsToken)
+	if err != nil {
+		return nil, fmt.Errorf("create mautrix client: %w", err)
+	}
+	client.Client = httpClient
+	// This flag enables the `user_id` query parameter for impersonation.
+	client.SetAppServiceUserID = true
+
 	return &MatrixClient{
-		homeserver: cfg.HomeserverURL,
-		cacheTTL:   ttl,
-		httpClient: httpClient,
-		sessions:   make(map[string]*session),
+		cli: client,
 	}, nil
 }
 
-// EnsureSession returns a logged-in mautrix client for the provided credentials.
-// If the cached session is expired or missing it performs a new login.
-func (mc *MatrixClient) EnsureSession(ctx context.Context, username, password string) (*mautrix.Client, error) {
-	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
-		return nil, errors.New("username and password are required")
-	}
-
-	key := normalizeKey(username)
-	if sess := mc.loadSession(key); sess != nil {
-		return sess.client, nil
-	}
-
-	return mc.createSession(ctx, key, username, password)
-}
-
-// Invalidate removes any cached session for the provided username.
-func (mc *MatrixClient) Invalidate(username string) {
-	key := normalizeKey(username)
-	mc.mu.Lock()
-	delete(mc.sessions, key)
-	mc.mu.Unlock()
-}
-
-func (mc *MatrixClient) loadSession(key string) *session {
-	mc.mu.RLock()
-	defer mc.mu.RUnlock()
-	sess, ok := mc.sessions[key]
-	if !ok || sess == nil || sess.isExpired() {
-		return nil
-	}
-	return sess
-}
-
-func (mc *MatrixClient) createSession(ctx context.Context, key, username, password string) (*mautrix.Client, error) {
+// SendMessage sends a message to a room, impersonating the specified userID.
+func (mc *MatrixClient) SendMessage(ctx context.Context, userID id.UserID, roomID id.RoomID, content *event.MessageEventContent) (*mautrix.RespSendEvent, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if sess := mc.sessions[key]; sess != nil && !sess.isExpired() {
-		return sess.client, nil
-	}
-
-	client, err := mautrix.NewClient(mc.homeserver, "", "")
-	if err != nil {
-		return nil, fmt.Errorf("create matrix client: %w", err)
-	}
-	client.Client = mc.httpClient
-
-	req := &mautrix.ReqLogin{
-		Type: mautrix.AuthTypePassword,
-		Identifier: mautrix.UserIdentifier{
-			Type: mautrix.IdentifierTypeUser,
-			User: username,
-		},
-		Password:           password,
-		StoreCredentials:   true,
-		StoreHomeserverURL: false,
-	}
-
-	if _, err = client.Login(ctx, req); err != nil {
-		return nil, fmt.Errorf("matrix login failed: %w", err)
-	}
-
-	mc.sessions[key] = &session{
-		client:    client,
-		expiresAt: time.Now().Add(mc.cacheTTL),
-	}
-
-	return client, nil
+	mc.cli.UserID = userID
+	return mc.cli.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 }
 
-func (s *session) isExpired() bool {
-	return time.Now().After(s.expiresAt)
+// Sync performs a sync for the specified user to fetch messages.
+func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID, since string) (*mautrix.RespSync, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	mc.cli.UserID = userID
+	// The SyncRequest method takes filter parameters directly in this version.
+	// Using empty filter to ensure we get all rooms and messages
+	return mc.cli.SyncRequest(ctx, 30000, since, "", false, event.PresenceOnline)
 }
 
-func normalizeKey(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+// CreateDirectRoom creates a new direct message room impersonating 'userID' and inviting 'targetUserID'.
+func (mc *MatrixClient) CreateDirectRoom(ctx context.Context, userID id.UserID, targetUserID id.UserID) (*mautrix.RespCreateRoom, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	mc.cli.UserID = userID
+	req := &mautrix.ReqCreateRoom{
+		Invite:   []id.UserID{targetUserID},
+		Preset:   "trusted_private_chat",
+		IsDirect: true,
+	}
+	return mc.cli.CreateRoom(ctx, req)
+}
+
+// JoinRoom joins a room, impersonating the specified userID.
+func (mc *MatrixClient) JoinRoom(ctx context.Context, userID id.UserID, roomID id.RoomID) (*mautrix.RespJoinRoom, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	mc.cli.UserID = userID
+	return mc.cli.JoinRoom(ctx, string(roomID), nil)
+}
+
+// CreateRoom creates a new room impersonating the specified userID.
+func (mc *MatrixClient) CreateRoom(ctx context.Context, userID id.UserID, name string, invitees []id.UserID) (*mautrix.RespCreateRoom, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	mc.cli.UserID = userID
+	req := &mautrix.ReqCreateRoom{
+		Name:   name,
+		Invite: invitees,
+	}
+	return mc.cli.CreateRoom(ctx, req)
+}
+
+// ResolveRoomAlias resolves a room alias to a room ID.
+func (mc *MatrixClient) ResolveRoomAlias(ctx context.Context, roomAlias string) (*mautrix.RespAliasResolve, error) {
+	// This action does not require impersonation, so no lock is needed.
+	return mc.cli.ResolveAlias(ctx, id.RoomAlias(roomAlias))
 }

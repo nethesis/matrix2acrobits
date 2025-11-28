@@ -9,6 +9,7 @@ import (
 	"github.com/gsanchietti/matrix2acrobits/internal/service"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"maunium.net/go/mautrix/id"
 )
 
 const defaultPort = "8080"
@@ -37,10 +38,19 @@ func main() {
 
 	adminToken := os.Getenv("SUPER_ADMIN_TOKEN")
 	if adminToken == "" {
-		log.Fatal("SUPER_ADMIN_TOKEN is required")
+		log.Fatal("SUPER_ADMIN_TOKEN is required (must be the Application Service as_token)")
 	}
 
-	matrixClient, err := matrix.NewClient(matrix.Config{HomeserverURL: homeserver})
+	asUserID := os.Getenv("AS_USER_ID")
+	if asUserID == "" {
+		log.Fatal("AS_USER_ID is required (e.g., '@_acrobits_proxy:your.server.com')")
+	}
+
+	matrixClient, err := matrix.NewClient(matrix.Config{
+		HomeserverURL: homeserver,
+		AsToken:       adminToken,
+		AsUserID:      id.UserID(asUserID),
+	})
 	if err != nil {
 		log.Fatalf("initialize matrix client: %v", err)
 	}

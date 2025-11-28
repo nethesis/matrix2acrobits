@@ -48,12 +48,13 @@ func NewMessageService(matrixClient *matrix.MatrixClient) *MessageService {
 
 // SendMessage translates an Acrobits send_message request into Matrix /send.
 func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessageRequest) (*models.SendMessageResponse, error) {
-	client, err := s.matrixClient.EnsureSession(ctx, req.From, req.Password)
-	if err != nil {
-		return nil, fmt.Errorf("ensure matrix session: %w", mapAuthErr(err))
+	// The user to impersonate is taken from the 'From' field.
+	userID := id.UserID(req.From)
+	if userID == "" {
+		return nil, ErrAuthentication
 	}
 
-	roomID, err := s.resolveRecipient(ctx, client, req.SMSTo)
+	roomID, err := s.resolveRecipient(ctx, userID, req.SMSTo)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		Body:    req.SMSBody,
 	}
 
-	resp, err := client.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	resp, err := s.matrixClient.SendMessage(ctx, userID, roomID, content)
 	if err != nil {
 		return nil, fmt.Errorf("send message: %w", mapAuthErr(err))
 	}
@@ -73,12 +74,13 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 
 // FetchMessages translates Matrix /sync into the Acrobits fetch_messages response.
 func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMessagesRequest) (*models.FetchMessagesResponse, error) {
-	client, err := s.matrixClient.EnsureSession(ctx, req.Username, req.Password)
-	if err != nil {
-		return nil, fmt.Errorf("ensure matrix session: %w", mapAuthErr(err))
+	// The user to impersonate is taken from the 'Username' field.
+	userID := id.UserID(req.Username)
+	if userID == "" {
+		return nil, ErrAuthentication
 	}
 
-	resp, err := client.SyncRequest(ctx, 0, req.LastID, "", false, event.PresenceOnline)
+	resp, err := s.matrixClient.Sync(ctx, userID, req.LastID)
 	if err != nil {
 		return nil, fmt.Errorf("sync messages: %w", mapAuthErr(err))
 	}
@@ -105,43 +107,62 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 	}, nil
 }
 
-func (s *MessageService) resolveRecipient(ctx context.Context, client *mautrix.Client, raw string) (id.RoomID, error) {
+func (s *MessageService) resolveRecipient(ctx context.Context, actingUserID id.UserID, raw string) (id.RoomID, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", ErrInvalidRecipient
 	}
+	// If it looks like a RoomID, use it directly.
 	if strings.HasPrefix(trimmed, "!") {
 		return id.RoomID(trimmed), nil
 	}
+	// If it looks like a UserID, ensure a DM exists and use that room.
 	if strings.HasPrefix(trimmed, "@") {
-		return s.ensureDirectRoom(ctx, client, trimmed)
+		return s.ensureDirectRoom(ctx, actingUserID, id.UserID(trimmed))
 	}
+	// If it's a room alias, resolve it.
+	if strings.HasPrefix(trimmed, "#") {
+		resp, err := s.matrixClient.ResolveRoomAlias(ctx, trimmed)
+		if err != nil {
+			return "", fmt.Errorf("resolve room alias: %w", err)
+		}
+		return resp.RoomID, nil
+	}
+	// Otherwise, check our internal mapping for a phone number.
 	if entry, ok := s.getMapping(trimmed); ok && entry.RoomID != "" {
 		return entry.RoomID, nil
 	}
 	return "", ErrInvalidRecipient
 }
 
-func (s *MessageService) ensureDirectRoom(ctx context.Context, client *mautrix.Client, matrixID string) (id.RoomID, error) {
-	if entry, ok := s.getMapping(matrixID); ok && entry.RoomID != "" {
+func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, targetUserID id.UserID) (id.RoomID, error) {
+	// Use both user IDs to create a consistent mapping key for the DM.
+	key := fmt.Sprintf("%s|%s", actingUserID, targetUserID)
+	if actingUserID > targetUserID {
+		key = fmt.Sprintf("%s|%s", targetUserID, actingUserID)
+	}
+
+	if entry, ok := s.getMapping(key); ok && entry.RoomID != "" {
 		return entry.RoomID, nil
 	}
-	if !strings.HasPrefix(matrixID, "@") {
+	if !strings.HasPrefix(string(targetUserID), "@") {
 		return "", ErrInvalidRecipient
 	}
 
-	resp, err := client.CreateRoom(ctx, &mautrix.ReqCreateRoom{
-		Invite:   []id.UserID{id.UserID(matrixID)},
-		Preset:   "trusted_private_chat",
-		IsDirect: true,
-	})
+	resp, err := s.matrixClient.CreateDirectRoom(ctx, actingUserID, targetUserID)
 	if err != nil {
 		return "", err
 	}
 
+	// Ensure the target user joins the room so they can see it in their sync
+	_, err = s.matrixClient.JoinRoom(ctx, targetUserID, resp.RoomID)
+	if err != nil {
+		return "", fmt.Errorf("join room as target user: %w", err)
+	}
+
 	entry := mappingEntry{
-		SMSNumber: matrixID,
-		MatrixID:  matrixID,
+		SMSNumber: key, // Use the combined key for internal storage
+		MatrixID:  string(targetUserID),
 		RoomID:    resp.RoomID,
 		UpdatedAt: s.now(),
 	}
