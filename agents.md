@@ -58,6 +58,24 @@ internal/matrix/  # Matrix client wrapper and logic
 internal/service/ # Business logic (translation between Acrobits <-> Matrix models)
 pkg/models/       # Shared structs (Acrobits request/response objects)
 ```
+---
+
+## Build
+
+```bash
+# build (produces ./matrix2acrobits)
+go build -o matrix2acrobits .
+```
+---
+
+## Quick run
+
+```bash
+export MATRIX_HOMESERVER_URL="https://matrix.your-homeserver-name.com"
+export SUPER_ADMIN_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
+export PROXY_PORT=8080
+./matrix2acrobits
+```
 
 ---
 
@@ -89,6 +107,6 @@ pkg/models/       # Shared structs (Acrobits request/response objects)
 - Authentication works dynamically (proxy does not store credentials; it uses them to auth with Matrix on every request or caches the session).
 - `fetch_messages` correctly handles the `last_id` cursor to only return new messages.
 - Standard Go tests (unit and integration) are passing.
-- Code is linted and formatted.
+- Code is linted and formatted using `gofmt` and `golangci-lint`.
 
 
