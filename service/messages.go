@@ -122,8 +122,8 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 
 // FetchMessages translates Matrix /sync into the Acrobits fetch_messages response.
 func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMessagesRequest) (*models.FetchMessagesResponse, error) {
-	// Debug full request
 	logger.Debug().Interface("request", req).Msg("fetch messages request received")
+
 	// The user to impersonate is taken from the 'Username' field.
 	userID := s.resolveMatrixUser(strings.TrimSpace(req.Username))
 	if userID == "" {
@@ -132,27 +132,27 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 	}
 
 	since := req.LastID
-	var filterAfterEventID string
+	filterAfterEventID := ""
 
 	// Acrobits might send a Matrix Event ID (starts with $) as last_id.
 	// Matrix Sync requires a stream token (usually starts with s).
 	// If we get an Event ID, we must perform an initial sync (empty since)
-	// and manually filter the results to return only messages after that event.
+	// and let the Matrix client filter the results to return only messages after that event.
 	if strings.HasPrefix(since, "$") {
-		logger.Debug().Str("last_id", since).Msg("received event ID as last_id, performing initial sync and filtering")
+		logger.Debug().Str("last_id", since).Msg("received event ID as last_id, performing initial sync with event filtering")
 		filterAfterEventID = since
 		since = ""
 	}
 
 	logger.Debug().Str("user_id", string(userID)).Str("since", since).Msg("syncing messages from matrix")
 
-	resp, err := s.matrixClient.Sync(ctx, userID, since)
+	resp, err := s.matrixClient.Sync(ctx, userID, since, filterAfterEventID)
 	if err != nil {
 		// If the token is invalid (e.g. expired or from a different session), retry with a full sync.
 		if strings.Contains(err.Error(), "Invalid stream token") || strings.Contains(err.Error(), "M_UNKNOWN") {
 			logger.Warn().Err(err).Msg("invalid stream token, retrying with full sync")
 			since = ""
-			resp, err = s.matrixClient.Sync(ctx, userID, since)
+			resp, err = s.matrixClient.Sync(ctx, userID, since, filterAfterEventID)
 		}
 	}
 	if err != nil {
@@ -166,21 +166,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 	callerIdentifier := s.resolveMatrixIDToIdentifier(string(userID))
 
 	for _, room := range resp.Rooms.Join {
-		// If we are filtering by event ID, check if the event is in this room's timeline.
-		// If it is, we only want events AFTER it.
-		// If it's not, we assume the event is older than the timeline window, so we take all events.
-		startIndex := 0
-		if filterAfterEventID != "" {
-			for i, evt := range room.Timeline.Events {
-				if string(evt.ID) == filterAfterEventID {
-					startIndex = i + 1
-					break
-				}
-			}
-		}
-
-		for i := startIndex; i < len(room.Timeline.Events); i++ {
-			evt := room.Timeline.Events[i]
+		for _, evt := range room.Timeline.Events {
 			if evt.Type != event.EventMessage {
 				continue
 			}
@@ -191,7 +177,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 			isSent := isSentBy(senderMatrixID, string(userID))
 
 			// Remap sender to identifier (e.g. "202" or "91201")
-			msg.Sender = s.resolveMatrixIDToIdentifier(senderMatrixID)
+			msg.Sender = string(s.resolveMatrixUser(senderMatrixID))
 
 			// Determine Recipient
 			if isSent {
