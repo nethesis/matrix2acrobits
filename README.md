@@ -17,6 +17,7 @@ The proxy is configured via environment variables. Minimal required env:
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
 - `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
 - `LOGLEVEL` (optional): logging verbosity level - `DEBUG`, `INFO`, `WARNING`, `CRITICAL` (default: `INFO`)
+- `MAPPING_FILE` (optional): path to a JSON file containing SMS-to-Matrix mappings to load at startup
 
 Building and running
 
@@ -43,6 +44,36 @@ The `LOGLEVEL` environment variable controls the verbosity of application logs:
 - **CRITICAL**: Only critical errors
 
 For debugging mapping and API issues, set `LOGLEVEL=DEBUG` to see detailed trace information.
+
+### Loading Mappings from File
+
+You can pre-load SMS-to-Matrix mappings at startup by providing a `MAPPING_FILE` environment variable pointing to a JSON file. This is useful for initializing the proxy with a set of known mappings.
+
+The JSON file should be an array of mapping objects:
+
+```json
+[
+  {
+    "sms_number": "91201",
+    "matrix_id": "@giacomo:synapse.gs.nethserver.net",
+    "room_id": "!giacomo-room:synapse.gs.nethserver.net"
+  },
+  {
+    "sms_number": "91202",
+    "matrix_id": "@mario:synapse.gs.nethserver.net",
+    "room_id": "!mario-room:synapse.gs.nethserver.net"
+  }
+]
+```
+
+Usage:
+
+```bash
+export MAPPING_FILE="/path/to/mappings.json"
+./matrix2acrobits
+```
+
+The loaded mappings will be logged at startup with the message: `mappings loaded from file count=N file=/path/to/mappings.json`
 
 ## Extra info
 

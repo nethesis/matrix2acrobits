@@ -1,0 +1,13 @@
+[
+  {
+    "sms_number": "91201",
+    "matrix_id": "@giacomo:synapse.gs.nethserver.net",
+    "room_id": "!giacomo-room:synapse.gs.nethserver.net"
+  },
+  {
+    "sms_number": "91202",
+    "matrix_id": "@mario:synapse.gs.nethserver.net",
+    "room_id": "!mario-room:synapse.gs.nethserver.net"
+  }
+]
+

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -282,6 +284,43 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 	}
 	entry = s.setMapping(entry)
 	return s.buildMappingResponse(entry), nil
+}
+
+// LoadMappingsFromFile loads mappings from a JSON file in the format:
+//
+//	[
+//	  {"sms_number": "91201", "matrix_id": "@giacomo:synapse.gs.nethserver.net", "room_id": "!giacomo-room:synapse.gs.nethserver.net"},
+//	  {"sms_number": "91202", "matrix_id": "@mario:synapse.gs.nethserver.net", "room_id": "!mario-room:synapse.gs.nethserver.net"}
+//	]
+//
+// This is typically called at startup if MAPPING_FILE environment variable is set.
+func (s *MessageService) LoadMappingsFromFile(filePath string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read mapping file: %w", err)
+	}
+
+	var mappingArray []models.MappingRequest
+	if err := json.Unmarshal(data, &mappingArray); err != nil {
+		return fmt.Errorf("failed to parse mapping file: %w", err)
+	}
+
+	for _, req := range mappingArray {
+		if req.SMSNumber == "" {
+			logger.Warn().Msg("skipping mapping with empty sms_number")
+			continue
+		}
+		entry := mappingEntry{
+			SMSNumber: req.SMSNumber,
+			MatrixID:  req.MatrixID,
+			RoomID:    id.RoomID(req.RoomID),
+			UpdatedAt: s.now(),
+		}
+		s.setMapping(entry)
+	}
+
+	logger.Info().Int("count", len(mappingArray)).Str("file", filePath).Msg("mappings loaded from file")
+	return nil
 }
 
 func (s *MessageService) buildMappingResponse(entry mappingEntry) *models.MappingResponse {

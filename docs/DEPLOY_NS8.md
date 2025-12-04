@@ -103,6 +103,21 @@ Run the container:
 podman run --rm --replace --name matrix2acrobits --network host -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net -e SUPER_ADMIN_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net ghcr.io/nethesis/matrix2acrobits
 ```
 
+
+Then run the container with the mapping file mounted:
+```
+podman run --rm --replace --name matrix2acrobits --network host \
+  -v /etc/matrix2acrobits/mappings.json:/mappings.json:z \
+  -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net \
+  -e SUPER_ADMIN_TOKEN=secret \
+  -e PROXY_PORT=8080 \
+  -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net \
+  -e MAPPING_FILE=/mappings.json \
+  ghcr.io/nethesis/matrix2acrobits
+```
+
+The container will log the loaded mappings at startup: `mappings loaded from file count=N file=/mappings.json`
+
 Configure traefik to route /m2a to the proxy:
 ```
 api-cli run set-route  --agent module/traefik1 --data '{"instance": "matrix1-m2a", "name":"synapse-m2a","host":"synapse.gs.nethserver.net","path":"/m2a","url":"http://localhost:8080","lets_encrypt":true, "strip_prefix": true}'
@@ -138,19 +153,19 @@ curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message 
 ```
 
 
-Map SMS number (201) to Matrix user (giacomo):
+Map SMS number (91201) to Matrix user (giacomo):
 ```
-curl -v -X POST "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
-  "sms_number": "201",
+curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
+  "sms_number": "91201",
   "matrix_id": "@giacomo:synapse.gs.nethserver.net",
   "room_id": "!giacomo-room:synapse.gs.nethserver.net"
 }'
 ```
 
-Map SMS number (202) to Matrix user (mario):
+Map SMS number (91202) to Matrix user (mario):
 ```
-curl -v -X POST "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
-  "sms_number": "202",
+curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
+  "sms_number": "91202",
   "matrix_id": "@mario:synapse.gs.nethserver.net",
   "room_id": "!mario-room:synapse.gs.nethserver.net"
 }'
@@ -161,22 +176,32 @@ Retrieve current mappings:
 curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix" -H "X-Super-Admin-Token: secret"
 ```
 
-Send message using mapped SMS number (201) - Giacomo to Mario:
+Send message using mapped SMS number (91201) - Giacomo to Mario:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "@giacomo:synapse.gs.nethserver.net",
-    "sms_to": "202",
+    "sms_to": "91202",
     "sms_body": "Hello Mario — this is Giacomo (curl test using mapped number)",
     "content_type": "text/plain"
   }'
 ```
 
-Send message using mapped SMS number (202) - Mario to Giacomo:
+Send message using mapped SMS number (91202) - Mario to Giacomo:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "@mario:synapse.gs.nethserver.net",
-    "sms_to": "201",
+    "sms_to": "91201",
     "sms_body": "Hello Giacomo — this is Mario reply (curl test using mapped number)",
+    "content_type": "text/plain"
+  }'
+```
+
+Send message using mapped numbers - Giacomo to Mario:
+```
+curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
+    "from": "91201",
+    "sms_to": "91202",
+    "sms_body": "Hello Mario — this is Giacomo (curl test using both mapped numbers)",
     "content_type": "text/plain"
   }'
 ```

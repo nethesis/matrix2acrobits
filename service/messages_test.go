@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"testing"
 
 	"github.com/nethesis/matrix2acrobits/models"
@@ -264,4 +265,101 @@ func TestIsPhoneNumber(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestLoadMappingsFromFile(t *testing.T) {
+	// Create a temporary JSON file with test mappings in array format
+	tmpFile, err := os.CreateTemp("", "mappings_*.json")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	// Write test data in array format
+	testData := `[
+  {
+    "sms_number": "91201",
+    "matrix_id": "@giacomo:example.com",
+    "room_id": "!room1:example.com"
+  },
+  {
+    "sms_number": "91202",
+    "matrix_id": "@mario:example.com",
+    "room_id": "!room2:example.com"
+  }
+]`
+	_, err = tmpFile.WriteString(testData)
+	assert.NoError(t, err)
+	tmpFile.Close()
+
+	// Create a message service
+	svc := NewMessageService(nil)
+
+	// Load mappings from file
+	err = svc.LoadMappingsFromFile(tmpFile.Name())
+	assert.NoError(t, err)
+
+	// Verify mappings were loaded
+	mappings, err := svc.ListMappings()
+	assert.NoError(t, err)
+	assert.Len(t, mappings, 2)
+
+	// Check specific mappings
+	mapping1, err := svc.LookupMapping("91201")
+	assert.NoError(t, err)
+	assert.Equal(t, "@giacomo:example.com", mapping1.MatrixID)
+	assert.Equal(t, "!room1:example.com", mapping1.RoomID)
+
+	mapping2, err := svc.LookupMapping("91202")
+	assert.NoError(t, err)
+	assert.Equal(t, "@mario:example.com", mapping2.MatrixID)
+	assert.Equal(t, "!room2:example.com", mapping2.RoomID)
+}
+
+func TestLoadMappingsFromFile_LegacyFormat(t *testing.T) {
+	// Create a temporary JSON file with test mappings in legacy format
+	tmpFile, err := os.CreateTemp("", "mappings_legacy_*.json")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	// Write test data in legacy format (object with phone numbers as keys)
+	testData := `{
+    "91201": "@giacomo:example.com",
+    "91202": "@mario:example.com"
+}`
+	_, err = tmpFile.WriteString(testData)
+	assert.NoError(t, err)
+	tmpFile.Close()
+
+	// Create a message service
+	svc := NewMessageService(nil)
+
+	// Load mappings from file - should fail since we only support extended format now
+	err = svc.LoadMappingsFromFile(tmpFile.Name())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse mapping file")
+}
+
+func TestLoadMappingsFromFile_FileNotFound(t *testing.T) {
+	svc := NewMessageService(nil)
+
+	err := svc.LoadMappingsFromFile("/nonexistent/file.json")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read mapping file")
+}
+
+func TestLoadMappingsFromFile_InvalidJSON(t *testing.T) {
+	// Create a temporary file with invalid JSON
+	tmpFile, err := os.CreateTemp("", "invalid_*.json")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	// Write invalid JSON
+	_, err = tmpFile.WriteString("{ invalid json }")
+	assert.NoError(t, err)
+	tmpFile.Close()
+
+	svc := NewMessageService(nil)
+
+	err = svc.LoadMappingsFromFile(tmpFile.Name())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse mapping file")
 }

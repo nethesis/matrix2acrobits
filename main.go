@@ -68,6 +68,14 @@ func main() {
 	svc := service.NewMessageService(matrixClient)
 	api.RegisterRoutes(e, svc, adminToken)
 
+	// Load mappings from file if MAPPING_FILE env var is set
+	mappingFile := os.Getenv("MAPPING_FILE")
+	if mappingFile != "" {
+		if err := svc.LoadMappingsFromFile(mappingFile); err != nil {
+			logger.Error().Err(err).Str("file", mappingFile).Msg("failed to load mappings from file")
+		}
+	}
+
 	logger.Info().Str("port", port).Msg("starting server")
 	if err := e.Start(":" + port); err != nil {
 		logger.Fatal().Err(err).Msg("server stopped")
