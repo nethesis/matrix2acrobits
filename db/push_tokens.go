@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/nethesis/matrix2acrobits/logger"
+	_ "modernc.org/sqlite"
 )
 
 // PushToken represents a stored push token record.
@@ -30,7 +30,7 @@ type Database struct {
 
 // NewDatabase initializes a SQLite database at the given path and creates the schema.
 func NewDatabase(dbPath string) (*Database, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}

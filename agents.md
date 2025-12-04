@@ -62,12 +62,27 @@ pkg/models/       # Shared structs (Acrobits request/response objects)
 ```
 ---
 
-## Build
+## Build binary
 
 ```bash
 # build (produces ./matrix2acrobits)
 go build -o matrix2acrobits .
 ```
+---
+
+## Build container
+
+To build:
+```bash
+buildah  build --layers -t ghcr.io/nethesis/matrix2acrobits:latest .
+```
+
+To validate the built image:
+```
+podman run --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debug  -e MATRIX_HOMESERVER_URL=https://example.local -e SUPER_ADMIN_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:example.local ghcr.io/nethesis/matrix2acrobits:latest
+
+```
+
 ---
 
 ## Quick run
