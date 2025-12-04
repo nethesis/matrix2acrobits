@@ -58,6 +58,9 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 // Only 1-to-1 direct messaging is supported.
 // Both sender and recipient are resolved to Matrix user IDs using local mappings if necessary.
 func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessageRequest) (*models.SendMessageResponse, error) {
+	// Debug full request
+	logger.Debug().Interface("request", req).Msg("send message request received")
+
 	senderStr := strings.TrimSpace(req.From)
 	if senderStr == "" {
 		logger.Warn().Msg("send message: empty sender")
