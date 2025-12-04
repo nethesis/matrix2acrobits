@@ -37,11 +37,12 @@ type MessageService struct {
 }
 
 type mappingEntry struct {
-	Number    string
-	MatrixID  string
-	RoomID    id.RoomID
-	UserName  string
-	UpdatedAt time.Time
+	Number     string
+	MatrixID   string
+	RoomID     id.RoomID
+	UserName   string
+	SubNumbers []string
+	UpdatedAt  time.Time
 }
 
 // NewMessageService wires the provided Matrix client and push token database into the service layer.
@@ -244,6 +245,13 @@ func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
 }
 
 // resolveMatrixIDToIdentifier resolves a Matrix user ID to a preferred identifier (Number, then UserName).
+// The resolution logic:
+//   - First checks if any sub_number matches the matrix_id; if found, returns the main number
+//   - Then checks if the main number matches the matrix_id; if found, returns the number
+//   - Falls back to UserName if available
+//   - Returns the original Matrix ID if no mapping is found
+//
+// Sub_numbers are never returned directly; if a sub_number is matched, the main number is returned instead.
 func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 	matrixID = strings.TrimSpace(matrixID)
 
@@ -255,6 +263,16 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 			if strings.Contains(entry.Number, "|") {
 				continue
 			}
+
+			// First try to match against sub_numbers
+			for _, subNum := range entry.SubNumbers {
+				if strings.EqualFold(strings.TrimSpace(subNum), matrixID) {
+					// Sub_number matched, return the main number instead
+					logger.Debug().Str("matrix_id", matrixID).Str("sub_number", subNum).Str("number", entry.Number).Msg("resolved matrix id to number via sub_number")
+					return entry.Number
+				}
+			}
+
 			// Prefer Number as the identifier
 			if entry.Number != "" {
 				logger.Debug().Str("matrix_id", matrixID).Str("number", entry.Number).Msg("resolved matrix id to number")
@@ -389,11 +407,12 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 	}
 
 	entry := mappingEntry{
-		Number:    number,
-		MatrixID:  strings.TrimSpace(req.MatrixID),
-		RoomID:    id.RoomID(roomID),
-		UserName:  strings.TrimSpace(req.UserName),
-		UpdatedAt: s.now(),
+		Number:     number,
+		MatrixID:   strings.TrimSpace(req.MatrixID),
+		RoomID:     id.RoomID(roomID),
+		UserName:   strings.TrimSpace(req.UserName),
+		SubNumbers: req.SubNumbers,
+		UpdatedAt:  s.now(),
 	}
 	entry = s.setMapping(entry)
 	return s.buildMappingResponse(entry), nil
@@ -402,8 +421,8 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 // LoadMappingsFromFile loads mappings from a JSON file in the format:
 //
 //	[
-//	  {"number": "91201", "matrix_id": "@giacomo:synapse.gs.nethserver.net", "room_id": "!giacomo-room:synapse.gs.nethserver.net", "user_name": "Giacomo Rossi"},
-//	  {"number": "91202", "matrix_id": "@mario:synapse.gs.nethserver.net", "room_id": "!mario-room:synapse.gs.nethserver.net", "user_name": "Mario Bianchi"}
+//	  {"number": "201", "matrix_id": "@giacomo:synapse.gs.nethserver.net", "room_id": "!giacomo-room:synapse.gs.nethserver.net", "user_name": "Giacomo Rossi", "sub_numbers": ["3344", "91201"]},
+//	  {"number": "202", "matrix_id": "@mario:synapse.gs.nethserver.net", "room_id": "!mario-room:synapse.gs.nethserver.net", "user_name": "Mario Bianchi", "sub_numbers": ["3345", "91202"]}
 //	]
 //
 // This is typically called at startup if MAPPING_FILE environment variable is set.
@@ -424,11 +443,12 @@ func (s *MessageService) LoadMappingsFromFile(filePath string) error {
 			continue
 		}
 		entry := mappingEntry{
-			Number:    req.Number,
-			MatrixID:  req.MatrixID,
-			RoomID:    id.RoomID(req.RoomID),
-			UserName:  req.UserName,
-			UpdatedAt: s.now(),
+			Number:     req.Number,
+			MatrixID:   req.MatrixID,
+			RoomID:     id.RoomID(req.RoomID),
+			UserName:   req.UserName,
+			SubNumbers: req.SubNumbers,
+			UpdatedAt:  s.now(),
 		}
 		s.setMapping(entry)
 	}
@@ -439,11 +459,12 @@ func (s *MessageService) LoadMappingsFromFile(filePath string) error {
 
 func (s *MessageService) buildMappingResponse(entry mappingEntry) *models.MappingResponse {
 	return &models.MappingResponse{
-		Number:    entry.Number,
-		MatrixID:  entry.MatrixID,
-		RoomID:    string(entry.RoomID),
-		UserName:  entry.UserName,
-		UpdatedAt: entry.UpdatedAt.UTC().Format(time.RFC3339),
+		Number:     entry.Number,
+		MatrixID:   entry.MatrixID,
+		RoomID:     string(entry.RoomID),
+		UserName:   entry.UserName,
+		SubNumbers: entry.SubNumbers,
+		UpdatedAt:  entry.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

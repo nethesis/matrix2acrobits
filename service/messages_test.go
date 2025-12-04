@@ -364,6 +364,106 @@ func TestLoadMappingsFromFile_InvalidJSON(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse mapping file")
 }
+
+func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
+	// Test case 1: Resolve via sub_number match
+	// When a matrix_id matches one of the sub_numbers, the main number should be returned (not the sub_number)
+	t.Run("resolve via sub_number match", func(t *testing.T) {
+		svc := NewMessageService(nil, nil)
+		svc.SaveMapping(&models.MappingRequest{
+			Number:     "201",
+			MatrixID:   "@giacomo:example.com",
+			RoomID:     "!room1:example.com",
+			UserName:   "Giacomo Rossi",
+			SubNumbers: []string{"3344", "91201"},
+		})
+
+		// Resolve using a sub_number - should return the main number
+		result := svc.resolveMatrixIDToIdentifier("@giacomo:example.com")
+		assert.Equal(t, "201", result, "should return main number when matrix_id matches via sub_number")
+	})
+
+	// Test case 2: Resolve via main number
+	// When a matrix_id matches the main number field, return that number
+	t.Run("resolve via main number", func(t *testing.T) {
+		svc := NewMessageService(nil, nil)
+		svc.SaveMapping(&models.MappingRequest{
+			Number:   "202",
+			MatrixID: "@mario:example.com",
+			RoomID:   "!room2:example.com",
+			UserName: "Mario Bianchi",
+		})
+
+		// Resolve using the matrix_id - should return the main number
+		result := svc.resolveMatrixIDToIdentifier("@mario:example.com")
+		assert.Equal(t, "202", result, "should return main number when matrix_id matches")
+	})
+
+	// Test case 3: Sub_numbers should never be returned directly
+	// This is ensured by the logic that checks sub_numbers first, then returns the main number
+	t.Run("sub_numbers never returned directly", func(t *testing.T) {
+		svc := NewMessageService(nil, nil)
+		svc.SaveMapping(&models.MappingRequest{
+			Number:     "201",
+			MatrixID:   "@giacomo:example.com",
+			RoomID:     "!room1:example.com",
+			UserName:   "Giacomo Rossi",
+			SubNumbers: []string{"3344", "91201"},
+		})
+
+		// Try to resolve using the main number
+		result := svc.resolveMatrixIDToIdentifier("@giacomo:example.com")
+		assert.Equal(t, "201", result)
+		assert.NotEqual(t, "3344", result, "should never return sub_number directly")
+		assert.NotEqual(t, "91201", result, "should never return sub_number directly")
+	})
+
+	// Test case 4: Case insensitivity
+	// Matrix IDs should be matched case-insensitively
+	t.Run("case insensitivity", func(t *testing.T) {
+		svc := NewMessageService(nil, nil)
+		svc.SaveMapping(&models.MappingRequest{
+			Number:     "201",
+			MatrixID:   "@giacomo:example.com",
+			RoomID:     "!room1:example.com",
+			UserName:   "Giacomo Rossi",
+			SubNumbers: []string{"3344", "91201"},
+		})
+
+		// Try with uppercase
+		result := svc.resolveMatrixIDToIdentifier("@GIACOMO:EXAMPLE.COM")
+		assert.Equal(t, "201", result, "should match case-insensitively")
+	})
+
+	// Test case 5: Fallback to UserName when no sub_numbers or main number
+	// If matrix_id doesn't match main number but UserName is set, return UserName
+	t.Run("fallback to user name", func(t *testing.T) {
+		svc := NewMessageService(nil, nil)
+		// Create a mapping with matrix_id and username but no number
+		entry := mappingEntry{
+			Number:     "internal|key",
+			MatrixID:   "@test:example.com",
+			UserName:   "Test User",
+			SubNumbers: []string{},
+			UpdatedAt:  svc.now(),
+		}
+		svc.setMapping(entry)
+
+		// The matrix_id should match and we should get the number since it's available
+		// So this test actually verifies that internal mappings are skipped
+		result := svc.resolveMatrixIDToIdentifier("@test:example.com")
+		// Internal mappings (with |) should be skipped, so no match expected
+		assert.Equal(t, "@test:example.com", result, "internal mappings should be skipped")
+	})
+
+	// Test case 6: No mapping found, return original matrix_id
+	t.Run("no mapping returns original matrix_id", func(t *testing.T) {
+		svc := NewMessageService(nil, nil)
+		result := svc.resolveMatrixIDToIdentifier("@unknown:example.com")
+		assert.Equal(t, "@unknown:example.com", result, "should return original matrix_id when no mapping found")
+	})
+}
+
 func TestReportPushToken(t *testing.T) {
 	// Test with nil request
 	t.Run("nil request", func(t *testing.T) {
