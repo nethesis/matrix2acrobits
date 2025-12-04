@@ -56,6 +56,18 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		return nil, ErrAuthentication
 	}
 
+	// If 'From' is a phone number, try to map it to a Matrix user
+	if isPhoneNumber(req.From) {
+		logger.Debug().Str("from", req.From).Msg("sender is a phone number, attempting to resolve to Matrix user")
+		if entry, ok := s.getMapping(req.From); ok && entry.MatrixID != "" {
+			resolvedUserID := id.UserID(entry.MatrixID)
+			logger.Info().Str("phone_number", req.From).Str("matrix_id", entry.MatrixID).Msg("phone number mapped to Matrix user")
+			userID = resolvedUserID
+		} else {
+			logger.Warn().Str("phone_number", req.From).Msg("phone number mapping not found, using original sender ID")
+		}
+	}
+
 	logger.Debug().Str("user_id", string(userID)).Str("recipient", req.SMSTo).Msg("resolving recipient")
 
 	roomID, err := s.resolveRecipient(ctx, userID, req.SMSTo)
@@ -318,4 +330,35 @@ func mapAuthErr(err error) error {
 		return fmt.Errorf("%w", ErrAuthentication)
 	}
 	return err
+}
+
+// isPhoneNumber checks if a string looks like a phone number.
+// Returns true if the string contains only digits, spaces, hyphens, plus signs, and/or parentheses.
+func isPhoneNumber(s string) bool {
+	if s == "" {
+		return false
+	}
+	trimmed := strings.TrimSpace(s)
+	// Check if it starts with @ or ! or #, indicating it's a Matrix ID/room ID/alias
+	if strings.HasPrefix(trimmed, "@") || strings.HasPrefix(trimmed, "!") || strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	// A phone number contains only digits and optional formatting characters
+	for _, r := range trimmed {
+		if !isPhoneNumberRune(r) {
+			return false
+		}
+	}
+	// Must contain at least one digit
+	for _, r := range trimmed {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// isPhoneNumberRune checks if a rune is a valid character in a phone number
+func isPhoneNumberRune(r rune) bool {
+	return (r >= '0' && r <= '9') || r == ' ' || r == '-' || r == '+' || r == '(' || r == ')'
 }

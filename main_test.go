@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/nethesis/matrix2acrobits/api"
 	"github.com/nethesis/matrix2acrobits/matrix"
 	"github.com/nethesis/matrix2acrobits/models"
 	"github.com/nethesis/matrix2acrobits/service"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -416,6 +416,112 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+}
+
+func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
+	cfg := checkTestEnv(t)
+
+	// This test verifies that phone numbers in the 'from' field are resolved to Matrix IDs via mapping
+	if os.Getenv("RUN_INTEGRATION_TESTS") == "" {
+		t.Skip("Skipping integration tests; set RUN_INTEGRATION_TESTS=1 to run.")
+	}
+
+	server, err := startTestServer(cfg)
+	if err != nil {
+		t.Fatalf("failed to start test server: %v", err)
+	}
+	defer stopTestServer(server)
+
+	baseURL := "http://127.0.0.1:" + testServerPort
+	user1Localpart := getLocalpart(cfg.user1)
+	user2Localpart := getLocalpart(cfg.user2)
+	user1MatrixID := fmt.Sprintf("@%s:%s", user1Localpart, cfg.serverName)
+	user2MatrixID := fmt.Sprintf("@%s:%s", user2Localpart, cfg.serverName)
+
+	t.Run("SendMessageWithPhoneNumberFromField", func(t *testing.T) {
+		// Step 1: Create a room as user1
+		matrixClient, err := matrix.NewClient(matrix.Config{
+			HomeserverURL: cfg.homeserverURL,
+			AsUserID:      id.UserID(cfg.asUser),
+			AsToken:       cfg.adminToken,
+		})
+		if err != nil {
+			t.Fatalf("failed to create matrix client: %v", err)
+		}
+
+		roomName := fmt.Sprintf("Phone Test Room %d", time.Now().Unix())
+		createResp, err := matrixClient.CreateRoom(context.Background(), id.UserID(user1MatrixID), roomName, []id.UserID{id.UserID(user2MatrixID)})
+		if err != nil {
+			t.Fatalf("failed to create room: %v", err)
+		}
+		roomID := createResp.RoomID
+		t.Logf("Created room %s", roomID)
+
+		// Step 2: Join the room as user2
+		_, err = matrixClient.JoinRoom(context.Background(), id.UserID(user2MatrixID), roomID)
+		if err != nil {
+			t.Fatalf("failed for user2 to join room: %v", err)
+		}
+		t.Logf("User2 joined room %s", roomID)
+		time.Sleep(1 * time.Second)
+
+		// Step 3: Create a mapping from user1's phone number to user1's Matrix ID
+		phoneNumber := cfg.user1Number
+		mappingReq := models.MappingRequest{
+			SMSNumber: phoneNumber,
+			MatrixID:  user1MatrixID,
+			RoomID:    string(roomID),
+		}
+		headers := map[string]string{
+			"X-Super-Admin-Token": cfg.adminToken,
+		}
+		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, headers)
+		if err != nil {
+			t.Fatalf("failed to create mapping: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("failed to create mapping: expected 200, got %d: %s", resp.StatusCode, string(body))
+		}
+		t.Logf("Created mapping: %s → %s", phoneNumber, user1MatrixID)
+
+		// Step 4: Send a message using the phone number as the 'from' field
+		sendReq := models.SendMessageRequest{
+			From:    phoneNumber, // Using phone number instead of Matrix ID
+			SMSTo:   string(roomID),
+			SMSBody: fmt.Sprintf("Message from phone number %d", time.Now().Unix()),
+		}
+		resp, body, err = doRequest("POST", baseURL+"/api/client/send_message", sendReq, nil)
+		if err != nil {
+			t.Fatalf("send message request failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+		}
+		var sendResp models.SendMessageResponse
+		if err := json.Unmarshal(body, &sendResp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		t.Logf("Message sent from phone number: %s", sendResp.SMSID)
+
+		// Step 5: Verify that user2 sees the message from the mapped Matrix user (user1)
+		time.Sleep(2 * time.Second)
+		fetchResp, err := fetchMessagesWithRetry(t, baseURL, user2MatrixID, 10*time.Second)
+		if err != nil {
+			t.Fatalf("fetch messages failed: %v", err)
+		}
+
+		foundPhoneMessage := false
+		for _, msg := range fetchResp.ReceivedSMSS {
+			if strings.Contains(msg.SMSText, "Message from phone number") && msg.Sender == user1MatrixID {
+				foundPhoneMessage = true
+				t.Logf("User2 received message from phone-mapped user: sender=%s, text=%s", msg.Sender, msg.SMSText)
+				break
+			}
+		}
+		if !foundPhoneMessage {
+			t.Errorf("user2 did not receive message sent from phone number mapping")
 		}
 	})
 }

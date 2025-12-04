@@ -54,6 +54,14 @@ paths:
       operationId: sendMessage
       description: |
         Sends an outgoing message on behalf of a user.
+
+        The `from` field can be:
+        - A full Matrix ID (e.g., @user:server.com) - used directly
+        - A phone number (e.g., +1234567890) - resolved to Matrix ID via SMS-to-Matrix mapping if available
+
+        If a phone number is provided and a mapping exists, the message is sent on behalf of the mapped Matrix user.
+        If a phone number is provided but no mapping exists, the phone number is used as the sender ID.
+
         Authentication is handled by the Application Service backend; the `password` field is ignored.
       requestBody:
         required: true
@@ -68,7 +76,7 @@ paths:
               properties:
                 from:
                   type: string
-                  description: The full Matrix ID (e.g., @user:server.com) of the user to impersonate.
+                  description: The sender - either a full Matrix ID (e.g., @user:server.com) or a phone number (e.g., +1234567890).
                 password:
                   type: string
                   description: This field is ignored. Kept for client compatibility.

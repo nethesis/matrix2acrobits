@@ -194,3 +194,74 @@ func TestListMappings(t *testing.T) {
 		t.Fatalf("missing mapping for +222")
 	}
 }
+
+func TestIsPhoneNumber(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "Simple phone number",
+			input:    "1234567890",
+			expected: true,
+		},
+		{
+			name:     "Phone with plus prefix",
+			input:    "+1234567890",
+			expected: true,
+		},
+		{
+			name:     "Phone with hyphens",
+			input:    "123-456-7890",
+			expected: true,
+		},
+		{
+			name:     "Phone with spaces",
+			input:    "123 456 7890",
+			expected: true,
+		},
+		{
+			name:     "Phone with parentheses",
+			input:    "(123) 456-7890",
+			expected: true,
+		},
+		{
+			name:     "Matrix user ID",
+			input:    "@user:example.com",
+			expected: false,
+		},
+		{
+			name:     "Room ID",
+			input:    "!room123:example.com",
+			expected: false,
+		},
+		{
+			name:     "Room alias",
+			input:    "#alias:example.com",
+			expected: false,
+		},
+		{
+			name:     "Empty string",
+			input:    "",
+			expected: false,
+		},
+		{
+			name:     "Only formatting chars",
+			input:    "+-() ",
+			expected: false,
+		},
+		{
+			name:     "With invalid characters",
+			input:    "123-ABC",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isPhoneNumber(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
