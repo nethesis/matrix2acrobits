@@ -15,6 +15,7 @@ The proxy is configured via environment variables. Minimal required env:
 - `MATRIX_HOMESERVER_URL`: URL of your Matrix homeserver (e.g. `https://matrix.example`)
 - `SUPER_ADMIN_TOKEN`: the Application Service `as_token` from your registration file
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
+- `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
 
 Building and running
 
@@ -26,6 +27,7 @@ go build -o matrix2acrobits .
 export MATRIX_HOMESERVER_URL="https://matrix.your-homeserver-name.com"
 export SUPER_ADMIN_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
 export PROXY_PORT=8080
+export AS_USER_ID="@_acrobits_proxy:your-homeserver-name.com"
 ./matrix2acrobits
 ```
 
