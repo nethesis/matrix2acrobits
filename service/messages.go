@@ -123,9 +123,30 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 		return nil, ErrAuthentication
 	}
 
-	logger.Debug().Str("user_id", string(userID)).Str("since", req.LastID).Msg("syncing messages from matrix")
+	since := req.LastID
+	var filterAfterEventID string
 
-	resp, err := s.matrixClient.Sync(ctx, userID, req.LastID)
+	// Acrobits might send a Matrix Event ID (starts with $) as last_id.
+	// Matrix Sync requires a stream token (usually starts with s).
+	// If we get an Event ID, we must perform an initial sync (empty since)
+	// and manually filter the results to return only messages after that event.
+	if strings.HasPrefix(since, "$") {
+		logger.Debug().Str("last_id", since).Msg("received event ID as last_id, performing initial sync and filtering")
+		filterAfterEventID = since
+		since = ""
+	}
+
+	logger.Debug().Str("user_id", string(userID)).Str("since", since).Msg("syncing messages from matrix")
+
+	resp, err := s.matrixClient.Sync(ctx, userID, since)
+	if err != nil {
+		// If the token is invalid (e.g. expired or from a different session), retry with a full sync.
+		if strings.Contains(err.Error(), "Invalid stream token") || strings.Contains(err.Error(), "M_UNKNOWN") {
+			logger.Warn().Err(err).Msg("invalid stream token, retrying with full sync")
+			since = ""
+			resp, err = s.matrixClient.Sync(ctx, userID, since)
+		}
+	}
 	if err != nil {
 		logger.Error().Str("user_id", string(userID)).Err(err).Msg("matrix sync failed")
 		return nil, fmt.Errorf("sync messages: %w", mapAuthErr(err))
@@ -133,7 +154,21 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 	received, sent := make([]models.Message, 0, 8), make([]models.Message, 0, 8)
 	for _, room := range resp.Rooms.Join {
-		for _, evt := range room.Timeline.Events {
+		// If we are filtering by event ID, check if the event is in this room's timeline.
+		// If it is, we only want events AFTER it.
+		// If it's not, we assume the event is older than the timeline window, so we take all events.
+		startIndex := 0
+		if filterAfterEventID != "" {
+			for i, evt := range room.Timeline.Events {
+				if string(evt.ID) == filterAfterEventID {
+					startIndex = i + 1
+					break
+				}
+			}
+		}
+
+		for i := startIndex; i < len(room.Timeline.Events); i++ {
+			evt := room.Timeline.Events[i]
 			if evt.Type != event.EventMessage {
 				continue
 			}
