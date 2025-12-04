@@ -268,46 +268,56 @@ paths:
 
 components:
   schemas:
-    Message:
+    SMS:
       type: object
+      description: A message following the Acrobits Modern API format.
       properties:
-        id:
+        sms_id:
           type: string
           description: Unique identifier (Matrix Event ID).
         sending_date:
           type: string
           format: date-time
-          description: RFC 3339 timestamp.
+          description: RFC 3339 timestamp when the message was sent.
         sender:
           type: string
-          description: Sender address/ID.
+          description: Sender identifier (phone number or user name). Only present in received messages.
         recipient:
           type: string
-          description: Recipient address/ID (Room ID).
-        text:
+          description: Recipient identifier (phone number or user name). Only present in sent messages.
+        sms_text:
           type: string
-          description: Message body.
+          description: Message body (UTF-8 encoded).
         content_type:
           type: string
-          description: MIME type.
+          description: MIME content-type. Defaults to text/plain if omitted.
+        disposition_notification:
+          type: string
+          description: Opaque string from Send Message request. Can be omitted if empty.
+        displayed:
+          type: boolean
+          description: True if message has already been displayed on another device. Only in received messages.
         stream_id:
           type: string
-          description: Identifier for the conversation stream (Room ID).
+          description: Identifier for the conversation stream (Room ID or identifier).
     FetchMessagesResponse:
       type: object
+      description: Response from the fetch_messages endpoint following Acrobits Modern API specification.
       properties:
         date:
           type: string
           format: date-time
-          description: Current server time in RFC 3339.
-        received_messages:
+          description: Current server time in RFC 3339 format (used to synchronize timestamps).
+        received_smss:
           type: array
           items:
-            $ref: '#/components/schemas/Message'
-        sent_messages:
+            $ref: '#/components/schemas/SMS'
+          description: Array of received messages. Sorted by sending_date in ascending order (oldest first).
+        sent_smss:
           type: array
           items:
-            $ref: '#/components/schemas/Message'
+            $ref: '#/components/schemas/SMS'
+          description: Array of sent messages. Sorted by sending_date in ascending order (oldest first).
     MappingRequest:
       type: object
       required:
@@ -316,7 +326,7 @@ components:
       properties:
         number:
           type: string
-          description:  number or bridged identifier to map.
+          description: Phone number or bridged identifier to map.
         matrix_id:
           type: string
           description: Optional Matrix user to use when auto-creating DMs.

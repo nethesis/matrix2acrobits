@@ -407,8 +407,8 @@ func TestIntegration_SendAndFetchMessages(t *testing.T) {
 		}
 
 		found := false
-		for _, msg := range fetchResp.ReceivedMessages {
-			if strings.Contains(msg.Text, "Hello from integration test") && msg.Sender == user1MatrixID {
+		for _, msg := range fetchResp.ReceivedSMSs {
+			if strings.Contains(msg.SMSText, "Hello from integration test") && msg.Sender == user1MatrixID {
 				found = true
 				t.Logf("Found test message from %s", msg.Sender)
 				break
@@ -703,10 +703,10 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 		}
 
 		foundPhoneMessage := false
-		for _, msg := range fetchResp.ReceivedMessages {
-			if strings.Contains(msg.Text, "Message from phone number") && msg.Sender == user1MatrixID {
+		for _, msg := range fetchResp.ReceivedSMSs {
+			if strings.Contains(msg.SMSText, "Message from phone number") && msg.Sender == user1MatrixID {
 				foundPhoneMessage = true
-				t.Logf("User2 received message from phone-mapped user: sender=%s, text=%s", msg.Sender, msg.Text)
+				t.Logf("User2 received message from phone-mapped user: sender=%s, text=%s", msg.Sender, msg.SMSText)
 				break
 			}
 		}
@@ -823,10 +823,10 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Check that user1 sees the message from user2
 		foundUser2Message := false
-		for _, msg := range fetchResp1.ReceivedMessages {
-			if strings.Contains(msg.Text, "Hello from user2") && msg.Sender == user2MatrixID {
+		for _, msg := range fetchResp1.ReceivedSMSs {
+			if strings.Contains(msg.SMSText, "Hello from user2") && msg.Sender == user2MatrixID {
 				foundUser2Message = true
-				t.Logf("User1 received message from user2: %s", msg.Text)
+				t.Logf("User1 received message from user2: %s", msg.SMSText)
 				break
 			}
 		}
@@ -842,10 +842,10 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Check that user2 sees the message from user1
 		foundUser1Message := false
-		for _, msg := range fetchResp2.ReceivedMessages {
-			if strings.Contains(msg.Text, "Hello from user1") && msg.Sender == user1MatrixID {
+		for _, msg := range fetchResp2.ReceivedSMSs {
+			if strings.Contains(msg.SMSText, "Hello from user1") && msg.Sender == user1MatrixID {
 				foundUser1Message = true
-				t.Logf("User2 received message from user1: %s", msg.Text)
+				t.Logf("User2 received message from user1: %s", msg.SMSText)
 				break
 			}
 		}
@@ -855,10 +855,10 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Check that user2 also sees their own message in sent messages
 		foundOwnMessage := false
-		for _, msg := range fetchResp2.SentMessages {
-			if strings.Contains(msg.Text, "Hello from user2") && msg.Sender == user2MatrixID {
+		for _, msg := range fetchResp2.SentSMSs {
+			if strings.Contains(msg.SMSText, "Hello from user2") && msg.Recipient == user2MatrixID {
 				foundOwnMessage = true
-				t.Logf("User2 sees their own sent message: %s", msg.Text)
+				t.Logf("User2 sees their own sent message: %s", msg.SMSText)
 				break
 			}
 		}

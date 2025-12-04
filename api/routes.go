@@ -69,7 +69,7 @@ func (h handler) fetchMessages(c echo.Context) error {
 		return mapServiceError(err)
 	}
 
-	logger.Info().Str("endpoint", "fetch_messages").Str("username", req.Username).Int("received", len(resp.ReceivedMessages)).Int("sent", len(resp.SentMessages)).Msg("messages fetched successfully")
+	logger.Info().Str("endpoint", "fetch_messages").Str("username", req.Username).Int("received", len(resp.ReceivedSMSs)).Int("sent", len(resp.SentSMSs)).Msg("messages fetched successfully")
 	return c.JSON(http.StatusOK, resp)
 }
 

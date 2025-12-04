@@ -110,16 +110,16 @@ func TestSendMessageResponse_Marshal(t *testing.T) {
 func TestFetchMessagesResponse_Marshal(t *testing.T) {
 	resp := FetchMessagesResponse{
 		Date: "2025-01-01T00:00:00Z",
-		ReceivedMessages: []Message{
+		ReceivedSMSs: []SMS{
 			{
-				ID:   "$event1",
-				Text: "Received message",
+				SMSID:   "$event1",
+				SMSText: "Received message",
 			},
 		},
-		SentMessages: []Message{
+		SentSMSs: []SMS{
 			{
-				ID:   "$event2",
-				Text: "Sent message",
+				SMSID:   "$event2",
+				SMSText: "Sent message",
 			},
 		},
 	}
@@ -131,8 +131,8 @@ func TestFetchMessagesResponse_Marshal(t *testing.T) {
 	err = json.Unmarshal(data, &resp2)
 	assert.NoError(t, err)
 	assert.Equal(t, resp.Date, resp2.Date)
-	assert.Len(t, resp2.ReceivedMessages, 1)
-	assert.Len(t, resp2.SentMessages, 1)
+	assert.Len(t, resp2.ReceivedSMSs, 1)
+	assert.Len(t, resp2.SentSMSs, 1)
 }
 
 func TestMappingResponse_Marshal(t *testing.T) {

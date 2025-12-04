@@ -24,22 +24,35 @@ type FetchMessagesRequest struct {
 	Device     string `json:"device"`
 }
 
-// FetchMessagesResponse is the payload returned from the fetch_messages endpoint.
+// FetchMessagesResponse matches Acrobits Modern API specification.
 type FetchMessagesResponse struct {
-	Date             string    `json:"date"`
-	ReceivedMessages []Message `json:"received_messages"`
-	SentMessages     []Message `json:"sent_messages"`
+	Date         string `json:"date"`
+	ReceivedSMSs []SMS  `json:"received_smss"`
+	SentSMSs     []SMS  `json:"sent_smss"`
 }
 
-// Message represents the shared schema used in both fetch and send responses.
+// SMS represents a message in the Acrobits Modern API format.
+type SMS struct {
+	SMSID                   string `json:"sms_id"`
+	SendingDate             string `json:"sending_date"`
+	Sender                  string `json:"sender,omitempty"`
+	Recipient               string `json:"recipient,omitempty"`
+	SMSText                 string `json:"sms_text"`
+	ContentType             string `json:"content_type,omitempty"`
+	DispositionNotification string `json:"disposition_notification,omitempty"`
+	Displayed               bool   `json:"displayed,omitempty"`
+	StreamID                string `json:"stream_id"`
+}
+
+// Message is a helper struct for internal use.
 type Message struct {
-	ID          string `json:"message_id"`
-	SendingDate string `json:"sending_date"`
-	Sender      string `json:"sender"`
-	Recipient   string `json:"recipient"`
-	Text        string `json:"message_text"`
-	ContentType string `json:"content_type"`
-	StreamID    string `json:"stream_id"`
+	ID          string
+	SendingDate string
+	Sender      string
+	Recipient   string
+	Text        string
+	ContentType string
+	StreamID    string
 }
 
 // PushTokenReportRequest mirrors the Acrobits push token reporter POST JSON schema.

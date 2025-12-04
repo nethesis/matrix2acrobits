@@ -158,7 +158,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 		return nil, fmt.Errorf("sync messages: %w", mapAuthErr(err))
 	}
 
-	received, sent := make([]models.Message, 0, 8), make([]models.Message, 0, 8)
+	received, sent := make([]models.SMS, 0, 8), make([]models.SMS, 0, 8)
 
 	// Resolve the caller's identifier (e.g. "91201")
 	callerIdentifier := s.resolveMatrixIDToIdentifier(string(userID))
@@ -204,10 +204,21 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 				msg.Recipient = callerIdentifier
 			}
 
+			// Convert internal Message to SMS
+			sms := models.SMS{
+				SMSID:       msg.ID,
+				SendingDate: msg.SendingDate,
+				SMSText:     msg.Text,
+				ContentType: msg.ContentType,
+				StreamID:    msg.StreamID,
+			}
+
 			if isSent {
-				sent = append(sent, msg)
+				sms.Recipient = msg.Recipient
+				sent = append(sent, sms)
 			} else {
-				received = append(received, msg)
+				sms.Sender = msg.Sender
+				received = append(received, sms)
 			}
 		}
 	}
@@ -215,9 +226,9 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 	logger.Debug().Str("user_id", string(userID)).Int("received_count", len(received)).Int("sent_count", len(sent)).Msg("processed sync messages")
 
 	return &models.FetchMessagesResponse{
-		Date:             s.now().UTC().Format(time.RFC3339),
-		ReceivedMessages: received,
-		SentMessages:     sent,
+		Date:         s.now().UTC().Format(time.RFC3339),
+		ReceivedSMSs: received,
+		SentSMSs:     sent,
 	}, nil
 }
 
