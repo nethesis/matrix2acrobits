@@ -122,6 +122,8 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 
 // FetchMessages translates Matrix /sync into the Acrobits fetch_messages response.
 func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMessagesRequest) (*models.FetchMessagesResponse, error) {
+	// Debug full request
+	logger.Debug().Interface("request", req).Msg("fetch messages request received")
 	// The user to impersonate is taken from the 'Username' field.
 	userID := s.resolveMatrixUser(strings.TrimSpace(req.Username))
 	if userID == "" {
