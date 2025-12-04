@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nethesis/matrix2acrobits/logger"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -65,8 +66,17 @@ func (mc *MatrixClient) SendMessage(ctx context.Context, userID id.UserID, roomI
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
+	logger.Debug().Str("user_id", string(userID)).Str("room_id", string(roomID)).Msg("matrix: sending message event")
+
 	mc.cli.UserID = userID
-	return mc.cli.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	resp, err := mc.cli.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	if err != nil {
+		logger.Error().Str("user_id", string(userID)).Str("room_id", string(roomID)).Err(err).Msg("matrix: failed to send message event")
+		return nil, err
+	}
+
+	logger.Debug().Str("user_id", string(userID)).Str("room_id", string(roomID)).Str("event_id", string(resp.EventID)).Msg("matrix: message event sent")
+	return resp, nil
 }
 
 // Sync performs a sync for the specified user to fetch messages.
@@ -74,10 +84,19 @@ func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID, since string
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
+	logger.Debug().Str("user_id", string(userID)).Str("since", since).Msg("matrix: performing sync")
+
 	mc.cli.UserID = userID
 	// The SyncRequest method takes filter parameters directly in this version.
 	// Using empty filter to ensure we get all rooms and messages
-	return mc.cli.SyncRequest(ctx, 30000, since, "", false, event.PresenceOnline)
+	resp, err := mc.cli.SyncRequest(ctx, 30000, since, "", false, event.PresenceOnline)
+	if err != nil {
+		logger.Error().Str("user_id", string(userID)).Err(err).Msg("matrix: sync failed")
+		return nil, err
+	}
+
+	logger.Debug().Str("user_id", string(userID)).Int("rooms", len(resp.Rooms.Join)).Msg("matrix: sync completed")
+	return resp, nil
 }
 
 // CreateDirectRoom creates a new direct message room impersonating 'userID' and inviting 'targetUserID'.
@@ -85,13 +104,22 @@ func (mc *MatrixClient) CreateDirectRoom(ctx context.Context, userID id.UserID, 
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
+	logger.Debug().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Msg("matrix: creating direct room")
+
 	mc.cli.UserID = userID
 	req := &mautrix.ReqCreateRoom{
 		Invite:   []id.UserID{targetUserID},
 		Preset:   "trusted_private_chat",
 		IsDirect: true,
 	}
-	return mc.cli.CreateRoom(ctx, req)
+	resp, err := mc.cli.CreateRoom(ctx, req)
+	if err != nil {
+		logger.Error().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Err(err).Msg("matrix: failed to create direct room")
+		return nil, err
+	}
+
+	logger.Info().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Str("room_id", string(resp.RoomID)).Msg("matrix: direct room created")
+	return resp, nil
 }
 
 // JoinRoom joins a room, impersonating the specified userID.

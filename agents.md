@@ -21,6 +21,7 @@ The proxy translates Acrobits' proprietary HTTP API calls for messaging into sta
 - **Language:** Golang (1.23+)
 - **Web Framework:** Standard Echo (v4) framework
 - **Matrix SDK:** `mautrix-go` (recommended)
+- **Logging:** `zerolog` for structured logging with configurable levels
 - **Testing:** Standard testing package with `testify/assert` and `testify/mock`
 
 ---
@@ -53,6 +54,7 @@ The proxy translates Acrobits' proprietary HTTP API calls for messaging into sta
 
 ```
 cmd/              # Main application entry point
+internal/logger/  # Structured logging with configurable levels (DEBUG, INFO, WARNING, CRITICAL)
 internal/api/     # HTTP handlers for Acrobits endpoints
 internal/matrix/  # Matrix client wrapper and logic
 internal/service/ # Business logic (translation between Acrobits <-> Matrix models)
@@ -74,6 +76,7 @@ go build -o matrix2acrobits .
 export MATRIX_HOMESERVER_URL="https://matrix.your-homeserver-name.com"
 export SUPER_ADMIN_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
 export PROXY_PORT=8080
+export LOGLEVEL=INFO  # DEBUG, INFO, WARNING, or CRITICAL
 ./matrix2acrobits
 ```
 

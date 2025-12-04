@@ -16,6 +16,7 @@ The proxy is configured via environment variables. Minimal required env:
 - `SUPER_ADMIN_TOKEN`: the Application Service `as_token` from your registration file
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
 - `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
+- `LOGLEVEL` (optional): logging verbosity level - `DEBUG`, `INFO`, `WARNING`, `CRITICAL` (default: `INFO`)
 
 Building and running
 
@@ -28,8 +29,20 @@ export MATRIX_HOMESERVER_URL="https://matrix.your-homeserver-name.com"
 export SUPER_ADMIN_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
 export PROXY_PORT=8080
 export AS_USER_ID="@_acrobits_proxy:your-homeserver-name.com"
+export LOGLEVEL=INFO
 ./matrix2acrobits
 ```
+
+### Logging Levels
+
+The `LOGLEVEL` environment variable controls the verbosity of application logs:
+
+- **DEBUG**: Detailed information for diagnosing issues (shows all API calls, mapping lookups, Matrix operations)
+- **INFO**: General informational messages (successful operations, server startup) - **Default**
+- **WARNING**: Warning messages for potentially problematic situations
+- **CRITICAL**: Only critical errors
+
+For debugging mapping and API issues, set `LOGLEVEL=DEBUG` to see detailed trace information.
 
 ## Extra info
 
