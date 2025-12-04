@@ -1,6 +1,6 @@
 # Matrix to Acrobits Proxy
 
-This service acts as a proxy between an Acrobits softphone client and a Matrix homeserver, allowing users to send and receive Matrix messages through an SMS-like interface.
+This service acts as a proxy between an Acrobits softphone client and a Matrix homeserver, allowing users to send and receive Matrix messages through an -like interface.
 
 The proxy is written in Go and uses the following key technologies:
 - **Web Framework**: `github.com/labstack/echo/v4`
@@ -17,7 +17,7 @@ The proxy is configured via environment variables. Minimal required env:
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
 - `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
 - `LOGLEVEL` (optional): logging verbosity level - `DEBUG`, `INFO`, `WARNING`, `CRITICAL` (default: `INFO`)
-- `MAPPING_FILE` (optional): path to a JSON file containing SMS-to-Matrix mappings to load at startup
+- `MAPPING_FILE` (optional): path to a JSON file containing -to-Matrix mappings to load at startup
 - `PUSH_TOKEN_DB_PATH` (optional): path to a database file for storing push tokens
 
 Building and running
@@ -48,7 +48,7 @@ For debugging mapping and API issues, set `LOGLEVEL=DEBUG` to see detailed trace
 
 ### Loading Mappings from File
 
-You can pre-load SMS-to-Matrix mappings at startup by providing a `MAPPING_FILE` environment variable pointing to a JSON file. This is useful for initializing the proxy with a set of known mappings.
+You can pre-load -to-Matrix mappings at startup by providing a `MAPPING_FILE` environment variable pointing to a JSON file. This is useful for initializing the proxy with a set of known mappings.
 
 See `docs/example-mappings.json` for an example format.
 

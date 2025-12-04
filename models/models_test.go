@@ -11,8 +11,8 @@ func TestSendMessageRequest_Marshal(t *testing.T) {
 	req := SendMessageRequest{
 		From:        "@user:example.com",
 		Password:    "secret",
-		SMSTo:       "@recipient:example.com",
-		SMSBody:     "Hello World",
+		To:          "@recipient:example.com",
+		Body:        "Hello World",
 		ContentType: "text/plain",
 	}
 
@@ -25,8 +25,8 @@ func TestSendMessageRequest_Marshal(t *testing.T) {
 	err = json.Unmarshal(data, &req2)
 	assert.NoError(t, err)
 	assert.Equal(t, req.From, req2.From)
-	assert.Equal(t, req.SMSTo, req2.SMSTo)
-	assert.Equal(t, req.SMSBody, req2.SMSBody)
+	assert.Equal(t, req.To, req2.To)
+	assert.Equal(t, req.Body, req2.Body)
 }
 
 func TestFetchMessagesRequest_Marshal(t *testing.T) {
@@ -51,10 +51,10 @@ func TestFetchMessagesRequest_Marshal(t *testing.T) {
 
 func TestMappingRequest_Marshal(t *testing.T) {
 	req := MappingRequest{
-		SMSNumber: "+1234567890",
-		MatrixID:  "@user:example.com",
-		RoomID:    "!room:example.com",
-		UserName:  "Test User",
+		Number:   "+1234567890",
+		MatrixID: "@user:example.com",
+		RoomID:   "!room:example.com",
+		UserName: "Test User",
 	}
 
 	data, err := json.Marshal(req)
@@ -64,7 +64,7 @@ func TestMappingRequest_Marshal(t *testing.T) {
 	var req2 MappingRequest
 	err = json.Unmarshal(data, &req2)
 	assert.NoError(t, err)
-	assert.Equal(t, req.SMSNumber, req2.SMSNumber)
+	assert.Equal(t, req.Number, req2.Number)
 	assert.Equal(t, req.MatrixID, req2.MatrixID)
 	assert.Equal(t, req.RoomID, req2.RoomID)
 	assert.Equal(t, req.UserName, req2.UserName)
@@ -72,11 +72,11 @@ func TestMappingRequest_Marshal(t *testing.T) {
 
 func TestMessage_Marshal(t *testing.T) {
 	msg := Message{
-		SMSID:       "$event123",
+		ID:          "$event123",
 		SendingDate: "2025-01-01T00:00:00Z",
 		Sender:      "@user:example.com",
 		Recipient:   "!room:example.com",
-		SMSText:     "Test message",
+		Text:        "Test message",
 		ContentType: "m.text",
 		StreamID:    "!room:example.com",
 	}
@@ -88,14 +88,14 @@ func TestMessage_Marshal(t *testing.T) {
 	var msg2 Message
 	err = json.Unmarshal(data, &msg2)
 	assert.NoError(t, err)
-	assert.Equal(t, msg.SMSID, msg2.SMSID)
-	assert.Equal(t, msg.SMSText, msg2.SMSText)
+	assert.Equal(t, msg.ID, msg2.ID)
+	assert.Equal(t, msg.Text, msg2.Text)
 	assert.Equal(t, msg.Sender, msg2.Sender)
 }
 
 func TestSendMessageResponse_Marshal(t *testing.T) {
 	resp := SendMessageResponse{
-		SMSID: "$event123",
+		ID: "$event123",
 	}
 
 	data, err := json.Marshal(resp)
@@ -104,22 +104,22 @@ func TestSendMessageResponse_Marshal(t *testing.T) {
 	var resp2 SendMessageResponse
 	err = json.Unmarshal(data, &resp2)
 	assert.NoError(t, err)
-	assert.Equal(t, resp.SMSID, resp2.SMSID)
+	assert.Equal(t, resp.ID, resp2.ID)
 }
 
 func TestFetchMessagesResponse_Marshal(t *testing.T) {
 	resp := FetchMessagesResponse{
 		Date: "2025-01-01T00:00:00Z",
-		ReceivedSMSS: []Message{
+		ReceivedMessages: []Message{
 			{
-				SMSID:   "$event1",
-				SMSText: "Received message",
+				ID:   "$event1",
+				Text: "Received message",
 			},
 		},
-		SentSMSS: []Message{
+		SentMessages: []Message{
 			{
-				SMSID:   "$event2",
-				SMSText: "Sent message",
+				ID:   "$event2",
+				Text: "Sent message",
 			},
 		},
 	}
@@ -131,13 +131,13 @@ func TestFetchMessagesResponse_Marshal(t *testing.T) {
 	err = json.Unmarshal(data, &resp2)
 	assert.NoError(t, err)
 	assert.Equal(t, resp.Date, resp2.Date)
-	assert.Len(t, resp2.ReceivedSMSS, 1)
-	assert.Len(t, resp2.SentSMSS, 1)
+	assert.Len(t, resp2.ReceivedMessages, 1)
+	assert.Len(t, resp2.SentMessages, 1)
 }
 
 func TestMappingResponse_Marshal(t *testing.T) {
 	resp := MappingResponse{
-		SMSNumber: "+1234567890",
+		Number:    "+1234567890",
 		MatrixID:  "@user:example.com",
 		RoomID:    "!room:example.com",
 		UserName:  "Test User",
@@ -150,6 +150,6 @@ func TestMappingResponse_Marshal(t *testing.T) {
 	var resp2 MappingResponse
 	err = json.Unmarshal(data, &resp2)
 	assert.NoError(t, err)
-	assert.Equal(t, resp.SMSNumber, resp2.SMSNumber)
+	assert.Equal(t, resp.Number, resp2.Number)
 	assert.Equal(t, resp.UpdatedAt, resp2.UpdatedAt)
 }

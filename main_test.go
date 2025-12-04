@@ -159,7 +159,7 @@ func startTestServer(cfg *testConfig) (*echo.Echo, error) {
 	baseURL := "http://127.0.0.1:" + testServerPort
 	for i := 0; i < 30; i++ {
 		// Use a simple, unauthenticated endpoint to check for readiness
-		resp, err := http.Get(baseURL + "/api/internal/map_sms_to_matrix")
+		resp, err := http.Get(baseURL + "/api/internal/map_number_to_matrix")
 		if err == nil {
 			resp.Body.Close()
 			return e, nil
@@ -274,14 +274,14 @@ func generateMappingVariants(s string) []string {
 }
 
 // ensureMappingVariants tries a set of mapping key variants and returns the variant that succeeded.
-func ensureMappingVariants(t *testing.T, baseURL, adminToken, smsNumber, matrixID, roomID string) (string, error) {
+func ensureMappingVariants(t *testing.T, baseURL, adminToken, number, matrixID, roomID string) (string, error) {
 	t.Helper()
-	variants := generateMappingVariants(smsNumber)
+	variants := generateMappingVariants(number)
 	var lastErr error
 	for _, v := range variants {
-		mappingReq := models.MappingRequest{SMSNumber: v, MatrixID: matrixID, RoomID: roomID}
+		mappingReq := models.MappingRequest{Number: v, MatrixID: matrixID, RoomID: roomID}
 		headers := map[string]string{"X-Super-Admin-Token": adminToken}
-		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, headers)
+		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
 		if err != nil {
 			lastErr = err
 			continue
@@ -295,15 +295,15 @@ func ensureMappingVariants(t *testing.T, baseURL, adminToken, smsNumber, matrixI
 }
 
 // ensureMapping posts a mapping to the internal mapping API and fails the test on unexpected errors.
-func ensureMapping(t *testing.T, baseURL, adminToken, smsNumber, matrixID, roomID string) {
+func ensureMapping(t *testing.T, baseURL, adminToken, number, matrixID, roomID string) {
 	t.Helper()
 	mappingReq := models.MappingRequest{
-		SMSNumber: smsNumber,
-		MatrixID:  matrixID,
-		RoomID:    roomID,
+		Number:   number,
+		MatrixID: matrixID,
+		RoomID:   roomID,
 	}
 	headers := map[string]string{"X-Super-Admin-Token": adminToken}
-	resp, body, err := doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, headers)
+	resp, body, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
 	if err != nil {
 		t.Fatalf("failed to create mapping via internal API: %v", err)
 	}
@@ -365,9 +365,9 @@ func TestIntegration_SendAndFetchMessages(t *testing.T) {
 	// Step 1: Send message from USER1 to USER2
 	t.Run("SendMessage", func(t *testing.T) {
 		sendReq := models.SendMessageRequest{
-			From:    user1MatrixID,
-			SMSTo:   user2MatrixID, // Send directly to user2's Matrix ID to create a DM
-			SMSBody: fmt.Sprintf("Hello from integration test %d", time.Now().Unix()),
+			From: user1MatrixID,
+			To:   user2MatrixID, // Send directly to user2's Matrix ID to create a DM
+			Body: fmt.Sprintf("Hello from integration test %d", time.Now().Unix()),
 		}
 
 		resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", sendReq, nil)
@@ -393,10 +393,10 @@ func TestIntegration_SendAndFetchMessages(t *testing.T) {
 		if err := json.Unmarshal(body, &sendResp); err != nil {
 			t.Fatalf("failed to parse response: %v", err)
 		}
-		if sendResp.SMSID == "" {
-			t.Error("expected non-empty sms_id")
+		if sendResp.ID == "" {
+			t.Error("expected non-empty message_id")
 		}
-		t.Logf("Message sent successfully: %s", sendResp.SMSID)
+		t.Logf("Message sent successfully: %s", sendResp.ID)
 	})
 
 	// Step 2: Fetch messages as USER2 to confirm receipt
@@ -407,8 +407,8 @@ func TestIntegration_SendAndFetchMessages(t *testing.T) {
 		}
 
 		found := false
-		for _, msg := range fetchResp.ReceivedSMSS {
-			if strings.Contains(msg.SMSText, "Hello from integration test") && msg.Sender == user1MatrixID {
+		for _, msg := range fetchResp.ReceivedMessages {
+			if strings.Contains(msg.Text, "Hello from integration test") && msg.Sender == user1MatrixID {
 				found = true
 				t.Logf("Found test message from %s", msg.Sender)
 				break
@@ -437,21 +437,21 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		mappingReq := models.MappingRequest{
-			SMSNumber: "+9998887777",
-			MatrixID:  fmt.Sprintf("@testuser:%s", serverName),
-			RoomID:    fmt.Sprintf("!testroom:%s", serverName),
+			Number:   "+9998887777",
+			MatrixID: fmt.Sprintf("@testuser:%s", serverName),
+			RoomID:   fmt.Sprintf("!testroom:%s", serverName),
 		}
 
 		// Create mapping
-		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, headers)
+		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
 			t.Logf("create mapping returned non-200 status; got %d: %s", resp.StatusCode, string(body))
 			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.SMSNumber, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
-					t.Logf("created mapping variant %s for sms_number %s", v, mappingReq.SMSNumber)
+				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
+					t.Logf("created mapping variant %s for number %s", v, mappingReq.Number)
 				} else {
 					t.Skip("mapping creation failed in this environment; mapping attempts exhausted; skipping assertion")
 				}
@@ -462,17 +462,17 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		// Retrieve mapping
-		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_sms_to_matrix?sms_number=%2B9998887777", nil, headers)
+		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B9998887777", nil, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
 			t.Logf("get mapping returned non-200 status; got %d: %s", resp.StatusCode, string(body))
 			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.SMSNumber, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
-					t.Logf("created mapping variant %s for sms_number %s", v, mappingReq.SMSNumber)
+				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
+					t.Logf("created mapping variant %s for number %s", v, mappingReq.Number)
 					// retry GET
-					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_sms_to_matrix?sms_number=%2B9998887777", nil, headers)
+					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B9998887777", nil, headers)
 					if err != nil {
 						t.Fatalf("request failed: %v", err)
 					}
@@ -489,8 +489,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		if err := json.Unmarshal(body, &mappingResp); err != nil {
 			t.Fatalf("failed to parse response: %v", err)
 		}
-		if mappingResp.SMSNumber != "+9998887777" {
-			t.Errorf("expected sms_number=+9998887777, got %s", mappingResp.SMSNumber)
+		if mappingResp.Number != "+9998887777" {
+			t.Errorf("expected number=+9998887777, got %s", mappingResp.Number)
 		}
 	})
 
@@ -500,22 +500,22 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		mappingReq := models.MappingRequest{
-			SMSNumber: "+1234509876",
-			MatrixID:  fmt.Sprintf("@userwithname:%s", serverName),
-			RoomID:    fmt.Sprintf("!roomwithname:%s", serverName),
-			UserName:  "Mario Rossi",
+			Number:   "+1234509876",
+			MatrixID: fmt.Sprintf("@userwithname:%s", serverName),
+			RoomID:   fmt.Sprintf("!roomwithname:%s", serverName),
+			UserName: "Mario Rossi",
 		}
 
 		// Create mapping with user_name
-		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, headers)
+		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
 			// Try variants if creation failed due to environment
 			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.SMSNumber, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
-					t.Logf("created mapping variant %s for sms_number %s", v, mappingReq.SMSNumber)
+				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
+					t.Logf("created mapping variant %s for number %s", v, mappingReq.Number)
 				} else {
 					t.Skip("mapping creation failed in this environment; skipping assertion")
 				}
@@ -526,15 +526,15 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		// Retrieve mapping and check user_name
-		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_sms_to_matrix?sms_number=%2B1234509876", nil, headers)
+		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B1234509876", nil, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
 			if resp.StatusCode == http.StatusBadRequest {
-				if _, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.SMSNumber, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
+				if _, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
 					// retry GET
-					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_sms_to_matrix?sms_number=%2B1234509876", nil, headers)
+					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B1234509876", nil, headers)
 					if err != nil {
 						t.Fatalf("request failed: %v", err)
 					}
@@ -558,13 +558,13 @@ func TestIntegration_MappingAPI(t *testing.T) {
 
 	t.Run("UnauthorizedAccess", func(t *testing.T) {
 		mappingReq := models.MappingRequest{
-			SMSNumber: "+1111111111",
-			MatrixID:  "@test:example.com",
-			RoomID:    "!test:example.com",
+			Number:   "+1111111111",
+			MatrixID: "@test:example.com",
+			RoomID:   "!test:example.com",
 		}
 
 		// No token
-		resp, _, err := doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, nil)
+		resp, _, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, nil)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -576,7 +576,7 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		headers := map[string]string{
 			"X-Super-Admin-Token": "wrongtoken",
 		}
-		resp, _, err = doRequest("POST", baseURL+"/api/internal/map_sms_to_matrix", mappingReq, headers)
+		resp, _, err = doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -593,7 +593,7 @@ func attemptMappingsAndRetrySend(t *testing.T, baseURL, adminToken string, origS
 	// First attempt: try common variants for the From field (phone numbers)
 	fromVariants := generateMappingVariants(origSendReq.From)
 	for _, fv := range fromVariants {
-		_, err := ensureMappingVariants(t, baseURL, adminToken, fv, origSendReq.From, origSendReq.SMSTo)
+		_, err := ensureMappingVariants(t, baseURL, adminToken, fv, origSendReq.From, origSendReq.To)
 		if err == nil {
 			// Retry send with the same original request (server will resolve mapping)
 			resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", origSendReq, nil)
@@ -608,9 +608,9 @@ func attemptMappingsAndRetrySend(t *testing.T, baseURL, adminToken string, origS
 
 	// Try mapping localpart@server variants for the recipient if it's not a Matrix ID
 	// (covers earlier cases where the identifier might be localpart-only)
-	if !strings.HasPrefix(origSendReq.SMSTo, "@") {
-		candidate := fmt.Sprintf("@%s:%s", getLocalpart(origSendReq.SMSTo), strings.Split(strings.TrimPrefix(origSendReq.SMSTo, "@"), ":")[0])
-		_, err := ensureMappingVariants(t, baseURL, adminToken, origSendReq.SMSTo, candidate, origSendReq.SMSTo)
+	if !strings.HasPrefix(origSendReq.To, "@") {
+		candidate := fmt.Sprintf("@%s:%s", getLocalpart(origSendReq.To), strings.Split(strings.TrimPrefix(origSendReq.To, "@"), ":")[0])
+		_, err := ensureMappingVariants(t, baseURL, adminToken, origSendReq.To, candidate, origSendReq.To)
 		if err == nil {
 			resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", origSendReq, nil)
 			return resp, body, err
@@ -674,9 +674,9 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 
 		// Step 4: Send a message using the phone number as the 'from' field
 		sendReq := models.SendMessageRequest{
-			From:    phoneNumber, // Using phone number instead of Matrix ID
-			SMSTo:   string(roomID),
-			SMSBody: fmt.Sprintf("Message from phone number %d", time.Now().Unix()),
+			From: phoneNumber, // Using phone number instead of Matrix ID
+			To:   string(roomID),
+			Body: fmt.Sprintf("Message from phone number %d", time.Now().Unix()),
 		}
 		resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", sendReq, nil)
 		if err != nil {
@@ -693,7 +693,7 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 		if err := json.Unmarshal(body, &sendResp); err != nil {
 			t.Fatalf("failed to parse response: %v", err)
 		}
-		t.Logf("Message sent from phone number: %s", sendResp.SMSID)
+		t.Logf("Message sent from phone number: %s", sendResp.ID)
 
 		// Step 5: Verify that user2 sees the message from the mapped Matrix user (user1)
 		time.Sleep(2 * time.Second)
@@ -703,10 +703,10 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 		}
 
 		foundPhoneMessage := false
-		for _, msg := range fetchResp.ReceivedSMSS {
-			if strings.Contains(msg.SMSText, "Message from phone number") && msg.Sender == user1MatrixID {
+		for _, msg := range fetchResp.ReceivedMessages {
+			if strings.Contains(msg.Text, "Message from phone number") && msg.Sender == user1MatrixID {
 				foundPhoneMessage = true
-				t.Logf("User2 received message from phone-mapped user: sender=%s, text=%s", msg.Sender, msg.SMSText)
+				t.Logf("User2 received message from phone-mapped user: sender=%s, text=%s", msg.Sender, msg.Text)
 				break
 			}
 		}
@@ -769,9 +769,9 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Step 3: User1 sends a message to the room
 		sendReq1 := models.SendMessageRequest{
-			From:    user1MatrixID,
-			SMSTo:   string(roomID), // Send to room ID
-			SMSBody: fmt.Sprintf("Hello from user1 %d", time.Now().Unix()),
+			From: user1MatrixID,
+			To:   string(roomID), // Send to room ID
+			Body: fmt.Sprintf("Hello from user1 %d", time.Now().Unix()),
 		}
 		resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", sendReq1, nil)
 		if err != nil {
@@ -788,16 +788,16 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 		if err := json.Unmarshal(body, &sendResp1); err != nil {
 			t.Fatalf("failed to parse response: %v", err)
 		}
-		t.Logf("User1 message sent: %s", sendResp1.SMSID)
+		t.Logf("User1 message sent: %s", sendResp1.ID)
 
 		// Wait for message propagation and use a retrying fetch to make
 		// assertions robust to delivery latency.
 
 		// Step 4: User2 sends a message to the room
 		sendReq2 := models.SendMessageRequest{
-			From:    user2MatrixID,
-			SMSTo:   string(roomID), // Send to room ID
-			SMSBody: fmt.Sprintf("Hello from user2 %d", time.Now().Unix()),
+			From: user2MatrixID,
+			To:   string(roomID), // Send to room ID
+			Body: fmt.Sprintf("Hello from user2 %d", time.Now().Unix()),
 		}
 		resp, body, err = doRequest("POST", baseURL+"/api/client/send_message", sendReq2, nil)
 		if err != nil {
@@ -810,7 +810,7 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 		if err := json.Unmarshal(body, &sendResp2); err != nil {
 			t.Fatalf("failed to parse response: %v", err)
 		}
-		t.Logf("User2 message sent: %s", sendResp2.SMSID)
+		t.Logf("User2 message sent: %s", sendResp2.ID)
 
 		// Wait for message propagation and use a retrying fetch to make
 		// assertions robust to delivery latency.
@@ -823,10 +823,10 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Check that user1 sees the message from user2
 		foundUser2Message := false
-		for _, msg := range fetchResp1.ReceivedSMSS {
-			if strings.Contains(msg.SMSText, "Hello from user2") && msg.Sender == user2MatrixID {
+		for _, msg := range fetchResp1.ReceivedMessages {
+			if strings.Contains(msg.Text, "Hello from user2") && msg.Sender == user2MatrixID {
 				foundUser2Message = true
-				t.Logf("User1 received message from user2: %s", msg.SMSText)
+				t.Logf("User1 received message from user2: %s", msg.Text)
 				break
 			}
 		}
@@ -842,10 +842,10 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Check that user2 sees the message from user1
 		foundUser1Message := false
-		for _, msg := range fetchResp2.ReceivedSMSS {
-			if strings.Contains(msg.SMSText, "Hello from user1") && msg.Sender == user1MatrixID {
+		for _, msg := range fetchResp2.ReceivedMessages {
+			if strings.Contains(msg.Text, "Hello from user1") && msg.Sender == user1MatrixID {
 				foundUser1Message = true
-				t.Logf("User2 received message from user1: %s", msg.SMSText)
+				t.Logf("User2 received message from user1: %s", msg.Text)
 				break
 			}
 		}
@@ -855,10 +855,10 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 
 		// Check that user2 also sees their own message in sent messages
 		foundOwnMessage := false
-		for _, msg := range fetchResp2.SentSMSS {
-			if strings.Contains(msg.SMSText, "Hello from user2") && msg.Sender == user2MatrixID {
+		for _, msg := range fetchResp2.SentMessages {
+			if strings.Contains(msg.Text, "Hello from user2") && msg.Sender == user2MatrixID {
 				foundOwnMessage = true
-				t.Logf("User2 sees their own sent message: %s", msg.SMSText)
+				t.Logf("User2 sees their own sent message: %s", msg.Text)
 				break
 			}
 		}

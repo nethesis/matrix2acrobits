@@ -131,41 +131,41 @@ After the above logins, you can send a message from giacomo to mario:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "@giacomo:synapse.gs.nethserver.net",
-    "sms_to": "@mario:synapse.gs.nethserver.net",
-    "sms_body": "Hello Mario — this is Giacomo (curl test)",
+    "to": "@mario:synapse.gs.nethserver.net",
+    "body": "Hello Mario — this is Giacomo (curl test)",
     "content_type": "text/plain"
   }'
 ```
 
 Response example:
 ```
-{"sms_id":"$VnrNZPmkkrgcqd2Lq15K9GKYuKXaNi-PrEsx6WLHfDs"}
+{"message":"$VnrNZPmkkrgcqd2Lq15K9GKYuKXaNi-PrEsx6WLHfDs"}
 ```
 
 Mario reply:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "@mario:synapse.gs.nethserver.net",
-    "sms_to": "@giacomo:synapse.gs.nethserver.net",
-    "sms_body": "Hello Giacomo — this is Mario reply (curl test)",
+    "to": "@giacomo:synapse.gs.nethserver.net",
+    "body": "Hello Giacomo — this is Mario reply (curl test)",
     "content_type": "text/plain"
   }'
 ```
 
 
-Map SMS number (91201) to Matrix user (giacomo):
+Map  number (91201) to Matrix user (giacomo):
 ```
-curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
-  "sms_number": "91201",
+curl "http://127.0.0.1:8080/api/internal/map_number_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
+  "number": "91201",
   "matrix_id": "@giacomo:synapse.gs.nethserver.net",
   "room_id": "!giacomo-room:synapse.gs.nethserver.net"
 }'
 ```
 
-Map SMS number (91202) to Matrix user (mario):
+Map  number (91202) to Matrix user (mario):
 ```
-curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
-  "sms_number": "91202",
+curl "http://127.0.0.1:8080/api/internal/map_number_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
+  "number": "91202",
   "matrix_id": "@mario:synapse.gs.nethserver.net",
   "room_id": "!mario-room:synapse.gs.nethserver.net"
 }'
@@ -173,25 +173,25 @@ curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix"   -H "Content-Type: 
 
 Retrieve current mappings:
 ```
-curl "http://127.0.0.1:8080/api/internal/map_sms_to_matrix" -H "X-Super-Admin-Token: secret"
+curl "http://127.0.0.1:8080/api/internal/map_number_to_matrix" -H "X-Super-Admin-Token: secret"
 ```
 
-Send message using mapped SMS number (91201) - Giacomo to Mario:
+Send message using mapped  number (91201) - Giacomo to Mario:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "@giacomo:synapse.gs.nethserver.net",
-    "sms_to": "91202",
-    "sms_body": "Hello Mario — this is Giacomo (curl test using mapped number)",
+    "to": "91202",
+    "body": "Hello Mario — this is Giacomo (curl test using mapped number)",
     "content_type": "text/plain"
   }'
 ```
 
-Send message using mapped SMS number (91202) - Mario to Giacomo:
+Send message using mapped  number (91202) - Mario to Giacomo:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "@mario:synapse.gs.nethserver.net",
-    "sms_to": "91201",
-    "sms_body": "Hello Giacomo — this is Mario reply (curl test using mapped number)",
+    "to": "91201",
+    "body": "Hello Giacomo — this is Mario reply (curl test using mapped number)",
     "content_type": "text/plain"
   }'
 ```
@@ -200,8 +200,8 @@ Send message using mapped numbers - Giacomo to Mario:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
     "from": "91201",
-    "sms_to": "91202",
-    "sms_body": "Hello Mario — this is Giacomo (curl test using both mapped numbers)",
+    "to": "91202",
+    "body": "Hello Mario — this is Giacomo (curl test using both mapped numbers)",
     "content_type": "text/plain"
   }'
 ```

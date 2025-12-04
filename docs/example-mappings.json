@@ -1,12 +1,12 @@
 [
   {
-    "sms_number": "91201",
+    "number": "91201",
     "matrix_id": "@giacomo:synapse.gs.nethserver.net",
     "room_id": "!giacomo-room:synapse.gs.nethserver.net",
     "user_name": "Giacomo Rossi"
   },
   {
-    "sms_number": "91202",
+    "number": "91202",
     "matrix_id": "@mario:synapse.gs.nethserver.net",
     "room_id": "!mario-room:synapse.gs.nethserver.net",
     "user_name": "Mario Bianchi"

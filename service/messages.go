@@ -37,7 +37,7 @@ type MessageService struct {
 }
 
 type mappingEntry struct {
-	SMSNumber string
+	Number    string
 	MatrixID  string
 	RoomID    id.RoomID
 	UserName  string
@@ -67,7 +67,7 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		return nil, ErrInvalidSender
 	}
 
-	recipientStr := strings.TrimSpace(req.SMSTo)
+	recipientStr := strings.TrimSpace(req.To)
 	if recipientStr == "" {
 		logger.Warn().Msg("send message: empty recipient")
 		return nil, ErrInvalidRecipient
@@ -107,7 +107,7 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 
 	content := &event.MessageEventContent{
 		MsgType: event.MsgText,
-		Body:    req.SMSBody,
+		Body:    req.Body,
 	}
 
 	resp, err := s.matrixClient.SendMessage(ctx, sender, roomID, content)
@@ -117,7 +117,7 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 	}
 
 	logger.Debug().Str("sender", string(sender)).Str("room_id", string(roomID)).Str("event_id", string(resp.EventID)).Msg("message sent successfully")
-	return &models.SendMessageResponse{SMSID: string(resp.EventID)}, nil
+	return &models.SendMessageResponse{ID: string(resp.EventID)}, nil
 }
 
 // FetchMessages translates Matrix /sync into the Acrobits fetch_messages response.
@@ -192,9 +192,9 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 	logger.Debug().Str("user_id", string(userID)).Int("received_count", len(received)).Int("sent_count", len(sent)).Msg("processed sync messages")
 
 	return &models.FetchMessagesResponse{
-		Date:         s.now().UTC().Format(time.RFC3339),
-		ReceivedSMSS: received,
-		SentSMSS:     sent,
+		Date:             s.now().UTC().Format(time.RFC3339),
+		ReceivedMessages: received,
+		SentMessages:     sent,
 	}, nil
 }
 
@@ -222,7 +222,7 @@ func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
 }
 
 // remapMatrixToUserName attempts to remap a Matrix user ID to a configured user name if a mapping exists.
-// If a user name is present in the mapping, it is returned. Otherwise, if an SMS number is
+// If a user name is present in the mapping, it is returned. Otherwise, if an  number is
 // configured for the mapping that is a plausible phone number it will be returned. If no mapping
 // is found, returns the original Matrix ID.
 func (s *MessageService) remapMatrixToUserName(matrixID string) string {
@@ -237,10 +237,10 @@ func (s *MessageService) remapMatrixToUserName(matrixID string) string {
 				logger.Debug().Str("matrix_id", matrixID).Str("user_name", entry.UserName).Msg("remapped matrix id to user name")
 				return entry.UserName
 			}
-			// Fall back to SMS number if it looks like a phone number
-			if isPhoneNumber(entry.SMSNumber) {
-				logger.Debug().Str("matrix_id", matrixID).Str("sms_number", entry.SMSNumber).Msg("remapped matrix id to sms number (fallback)")
-				return entry.SMSNumber
+			// Fall back to number if it looks like a phone number
+			if isPhoneNumber(entry.Number) {
+				logger.Debug().Str("matrix_id", matrixID).Str("number", entry.Number).Msg("remapped matrix id to number (fallback)")
+				return entry.Number
 			}
 			// If we have a MatrixID stored in the entry, prefer returning that normalized value
 			if entry.MatrixID != "" {
@@ -287,7 +287,7 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 	}
 
 	entry := mappingEntry{
-		SMSNumber: key, // Use the combined key for internal storage
+		Number:    key, // Use the combined key for internal storage
 		MatrixID:  string(targetUserID),
 		RoomID:    resp.RoomID,
 		UpdatedAt: s.now(),
@@ -306,8 +306,8 @@ func (s *MessageService) getMapping(key string) (mappingEntry, bool) {
 }
 
 func (s *MessageService) setMapping(entry mappingEntry) mappingEntry {
-	entry.SMSNumber = strings.TrimSpace(entry.SMSNumber)
-	normalized := normalizeMappingKey(entry.SMSNumber)
+	entry.Number = strings.TrimSpace(entry.Number)
+	normalized := normalizeMappingKey(entry.Number)
 	if normalized == "" {
 		logger.Warn().Msg("attempted to set mapping with empty key")
 		return entry
@@ -316,7 +316,7 @@ func (s *MessageService) setMapping(entry mappingEntry) mappingEntry {
 	defer s.mu.Unlock()
 	entry.UpdatedAt = s.now()
 	s.mappings[normalized] = entry
-	logger.Debug().Str("key", entry.SMSNumber).Str("room_id", string(entry.RoomID)).Msg("mapping stored")
+	logger.Debug().Str("key", entry.Number).Str("room_id", string(entry.RoomID)).Msg("mapping stored")
 	return entry
 }
 
@@ -343,9 +343,9 @@ func (s *MessageService) ListMappings() ([]*models.MappingResponse, error) {
 // SaveMapping persists a new mapping via the admin API.
 // For 1-to-1 messaging, this maps a key (phone number or identifier) to a direct room.
 func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.MappingResponse, error) {
-	smsNumber := strings.TrimSpace(req.SMSNumber)
-	if smsNumber == "" {
-		return nil, errors.New("sms_number is required")
+	number := strings.TrimSpace(req.Number)
+	if number == "" {
+		return nil, errors.New("number is required")
 	}
 	roomID := strings.TrimSpace(req.RoomID)
 	if roomID == "" {
@@ -353,7 +353,7 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 	}
 
 	entry := mappingEntry{
-		SMSNumber: smsNumber,
+		Number:    number,
 		MatrixID:  strings.TrimSpace(req.MatrixID),
 		RoomID:    id.RoomID(roomID),
 		UserName:  strings.TrimSpace(req.UserName),
@@ -366,8 +366,8 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 // LoadMappingsFromFile loads mappings from a JSON file in the format:
 //
 //	[
-//	  {"sms_number": "91201", "matrix_id": "@giacomo:synapse.gs.nethserver.net", "room_id": "!giacomo-room:synapse.gs.nethserver.net", "user_name": "Giacomo Rossi"},
-//	  {"sms_number": "91202", "matrix_id": "@mario:synapse.gs.nethserver.net", "room_id": "!mario-room:synapse.gs.nethserver.net", "user_name": "Mario Bianchi"}
+//	  {"number": "91201", "matrix_id": "@giacomo:synapse.gs.nethserver.net", "room_id": "!giacomo-room:synapse.gs.nethserver.net", "user_name": "Giacomo Rossi"},
+//	  {"number": "91202", "matrix_id": "@mario:synapse.gs.nethserver.net", "room_id": "!mario-room:synapse.gs.nethserver.net", "user_name": "Mario Bianchi"}
 //	]
 //
 // This is typically called at startup if MAPPING_FILE environment variable is set.
@@ -383,12 +383,12 @@ func (s *MessageService) LoadMappingsFromFile(filePath string) error {
 	}
 
 	for _, req := range mappingArray {
-		if req.SMSNumber == "" {
-			logger.Warn().Msg("skipping mapping with empty sms_number")
+		if req.Number == "" {
+			logger.Warn().Msg("skipping mapping with empty number")
 			continue
 		}
 		entry := mappingEntry{
-			SMSNumber: req.SMSNumber,
+			Number:    req.Number,
 			MatrixID:  req.MatrixID,
 			RoomID:    id.RoomID(req.RoomID),
 			UserName:  req.UserName,
@@ -403,7 +403,7 @@ func (s *MessageService) LoadMappingsFromFile(filePath string) error {
 
 func (s *MessageService) buildMappingResponse(entry mappingEntry) *models.MappingResponse {
 	return &models.MappingResponse{
-		SMSNumber: entry.SMSNumber,
+		Number:    entry.Number,
 		MatrixID:  entry.MatrixID,
 		RoomID:    string(entry.RoomID),
 		UserName:  entry.UserName,
@@ -435,11 +435,11 @@ func convertEvent(evt *event.Event) models.Message {
 
 	sendingDate := time.UnixMilli(evt.Timestamp).UTC().Format(time.RFC3339)
 	return models.Message{
-		SMSID:       string(evt.ID),
+		ID:          string(evt.ID),
 		SendingDate: sendingDate,
 		Sender:      string(evt.Sender),
 		Recipient:   string(evt.RoomID),
-		SMSText:     body,
+		Text:        body,
 		ContentType: contentType,
 		StreamID:    string(evt.RoomID),
 	}

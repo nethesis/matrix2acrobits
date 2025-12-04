@@ -34,7 +34,7 @@ paths:
                   description: The 'since' token from the last sync.
                 last_sent_id:
                   type: string
-                  description: The sms_id of the last sent message.
+                  description: The message id of the last sent message.
                 device:
                   type: string
                   description: Device identifier (e.g., 'ACROBITS').
@@ -57,7 +57,7 @@ paths:
 
         The `from` field can be:
         - A full Matrix ID (e.g., @user:server.com) - used directly
-        - A phone number (e.g., +1234567890) - resolved to Matrix ID via SMS-to-Matrix mapping if available
+        - A phone number (e.g., +1234567890) - resolved to Matrix ID via -to-Matrix mapping if available
 
         If a phone number is provided and a mapping exists, the message is sent on behalf of the mapped Matrix user.
         If a phone number is provided but no mapping exists, the phone number is used as the sender ID.
@@ -71,8 +71,8 @@ paths:
               type: object
               required:
                 - from
-                - sms_to
-                - sms_body
+                - to
+                - body
               properties:
                 from:
                   type: string
@@ -80,10 +80,10 @@ paths:
                 password:
                   type: string
                   description: This field is ignored. Kept for client compatibility.
-                sms_to:
+                to:
                   type: string
                   description: Recipient Matrix ID, Alias, or mapped phone number.
-                sms_body:
+                body:
                   type: string
                   description: The message content.
                 content_type:
@@ -100,7 +100,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  sms_id:
+                  message_id:
                     type: string
                     description: The Matrix event ID of the sent message.
         '400':
@@ -144,11 +144,11 @@ paths:
         response:
           {}
 
-  /api/internal/map_sms_to_matrix:
+  /api/internal/map_number_to_matrix:
     post:
-      summary: Register or update an SMS-to-Matrix mapping
+      summary: Register or update an -to-Matrix mapping
       description: |
-        Creates or overwrites the mapping between an SMS number (or other identifier) and
+        Creates or overwrites the mapping between an  number (or other identifier) and
         a Matrix room. Requires the `X-Super-Admin-Token` header.
       parameters:
         - in: header
@@ -187,11 +187,11 @@ paths:
           required: true
           description: The Application Service token (as_token).
         - in: query
-          name: sms_number
+          name: number
           schema:
             type: string
           required: false
-          description: The SMS number or identifier previously mapped. If omitted, the endpoint returns the full list of mappings.
+          description: The  number or identifier previously mapped. If omitted, the endpoint returns the full list of mappings.
       responses:
         '200':
           description: Mapping found
@@ -271,7 +271,7 @@ components:
     Message:
       type: object
       properties:
-        sms_id:
+        id:
           type: string
           description: Unique identifier (Matrix Event ID).
         sending_date:
@@ -284,7 +284,7 @@ components:
         recipient:
           type: string
           description: Recipient address/ID (Room ID).
-        sms_text:
+        text:
           type: string
           description: Message body.
         content_type:
@@ -300,23 +300,23 @@ components:
           type: string
           format: date-time
           description: Current server time in RFC 3339.
-        received_smss:
+        received_messages:
           type: array
           items:
             $ref: '#/components/schemas/Message'
-        sent_smss:
+        sent_messages:
           type: array
           items:
             $ref: '#/components/schemas/Message'
     MappingRequest:
       type: object
       required:
-        - sms_number
+        - number
         - room_id
       properties:
-        sms_number:
+        number:
           type: string
-          description: SMS number or bridged identifier to map.
+          description:  number or bridged identifier to map.
         matrix_id:
           type: string
           description: Optional Matrix user to use when auto-creating DMs.
@@ -329,7 +329,7 @@ components:
     MappingResponse:
       type: object
       properties:
-        sms_number:
+        number:
           type: string
         matrix_id:
           type: string

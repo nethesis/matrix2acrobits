@@ -160,14 +160,14 @@ func TestListMappings(t *testing.T) {
 
 	// Seed two mappings
 	svc.setMapping(mappingEntry{
-		SMSNumber: "+111",
-		MatrixID:  "@alice:example.com",
-		RoomID:    "!room1:example.com",
+		Number:   "+111",
+		MatrixID: "@alice:example.com",
+		RoomID:   "!room1:example.com",
 	})
 	svc.setMapping(mappingEntry{
-		SMSNumber: "+222",
-		MatrixID:  "@bob:example.com",
-		RoomID:    "!room2:example.com",
+		Number:   "+222",
+		MatrixID: "@bob:example.com",
+		RoomID:   "!room2:example.com",
 	})
 
 	list, err := svc.ListMappings()
@@ -178,7 +178,7 @@ func TestListMappings(t *testing.T) {
 	// Build a map for easy assertions
 	m := make(map[string]*models.MappingResponse)
 	for _, it := range list {
-		m[it.SMSNumber] = it
+		m[it.Number] = it
 	}
 
 	if v, ok := m["+111"]; ok {
@@ -276,12 +276,12 @@ func TestLoadMappingsFromFile(t *testing.T) {
 	// Write test data in array format
 	testData := `[
   {
-    "sms_number": "91201",
+    "number": "91201",
     "matrix_id": "@giacomo:example.com",
     "room_id": "!room1:example.com"
   },
   {
-    "sms_number": "91202",
+    "number": "91202",
     "matrix_id": "@mario:example.com",
     "room_id": "!room2:example.com"
   }

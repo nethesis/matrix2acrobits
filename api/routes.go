@@ -20,8 +20,8 @@ func RegisterRoutes(e *echo.Echo, svc *service.MessageService, adminToken string
 	e.POST("/api/client/send_message", h.sendMessage)
 	e.POST("/api/client/fetch_messages", h.fetchMessages)
 	e.POST("/api/client/push_token_report", h.pushTokenReport)
-	e.POST("/api/internal/map_sms_to_matrix", h.postMapping)
-	e.GET("/api/internal/map_sms_to_matrix", h.getMapping)
+	e.POST("/api/internal/map_number_to_matrix", h.postMapping)
+	e.GET("/api/internal/map_number_to_matrix", h.getMapping)
 	e.GET("/api/internal/push_tokens", h.getPushTokens)
 	e.DELETE("/api/internal/push_tokens", h.resetPushTokens)
 }
@@ -39,18 +39,18 @@ func (h handler) sendMessage(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
 	}
 
-	logger.Debug().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.SMSTo).Msg("processing send message request")
-	logger.Debug().Str("endpoint", "send_message").Str("raw_from", req.From).Str("raw_to", req.SMSTo).Msg("raw identifiers for recipient resolution")
+	logger.Debug().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.To).Msg("processing send message request")
+	logger.Debug().Str("endpoint", "send_message").Str("raw_from", req.From).Str("raw_to", req.To).Msg("raw identifiers for recipient resolution")
 
 	resp, err := h.svc.SendMessage(c.Request().Context(), &req)
 	if err != nil {
-		logger.Error().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.SMSTo).Err(err).Msg("failed to send message")
+		logger.Error().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.To).Err(err).Msg("failed to send message")
 		// Add extra context to help debugging recipient resolution
-		logger.Debug().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.SMSTo).Msg("send_message handler returning error to client; check mapping store and AS configuration")
+		logger.Debug().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.To).Msg("send_message handler returning error to client; check mapping store and AS configuration")
 		return mapServiceError(err)
 	}
 
-	logger.Info().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.SMSTo).Str("sms_id", resp.SMSID).Msg("message sent successfully")
+	logger.Info().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.To).Str("message_id", resp.ID).Msg("message sent successfully")
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -69,7 +69,7 @@ func (h handler) fetchMessages(c echo.Context) error {
 		return mapServiceError(err)
 	}
 
-	logger.Info().Str("endpoint", "fetch_messages").Str("username", req.Username).Int("received", len(resp.ReceivedSMSS)).Int("sent", len(resp.SentSMSS)).Msg("messages fetched successfully")
+	logger.Info().Str("endpoint", "fetch_messages").Str("username", req.Username).Int("received", len(resp.ReceivedMessages)).Int("sent", len(resp.SentMessages)).Msg("messages fetched successfully")
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -103,15 +103,15 @@ func (h handler) postMapping(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
 	}
 
-	logger.Debug().Str("endpoint", "post_mapping").Str("sms_number", req.SMSNumber).Str("room_id", req.RoomID).Msg("saving mapping")
+	logger.Debug().Str("endpoint", "post_mapping").Str("number", req.Number).Str("room_id", req.RoomID).Msg("saving mapping")
 
 	resp, err := h.svc.SaveMapping(&req)
 	if err != nil {
-		logger.Error().Str("endpoint", "post_mapping").Str("sms_number", req.SMSNumber).Err(err).Msg("failed to save mapping")
+		logger.Error().Str("endpoint", "post_mapping").Str("number", req.Number).Err(err).Msg("failed to save mapping")
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	logger.Info().Str("endpoint", "post_mapping").Str("sms_number", req.SMSNumber).Str("room_id", req.RoomID).Msg("mapping saved successfully")
+	logger.Info().Str("endpoint", "post_mapping").Str("number", req.Number).Str("room_id", req.RoomID).Msg("mapping saved successfully")
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -120,10 +120,10 @@ func (h handler) getMapping(c echo.Context) error {
 		return err
 	}
 
-	smsNumber := strings.TrimSpace(c.QueryParam("sms_number"))
-	if smsNumber == "" {
+	number := strings.TrimSpace(c.QueryParam("number"))
+	if number == "" {
 		logger.Debug().Str("endpoint", "get_mapping").Msg("listing all mappings")
-		// return full mappings list when sms_number is not provided
+		// return full mappings list when number is not provided
 		respList, err := h.svc.ListMappings()
 		if err != nil {
 			logger.Error().Str("endpoint", "get_mapping").Err(err).Msg("failed to list mappings")
@@ -133,19 +133,19 @@ func (h handler) getMapping(c echo.Context) error {
 		return c.JSON(http.StatusOK, respList)
 	}
 
-	logger.Debug().Str("endpoint", "get_mapping").Str("sms_number", smsNumber).Msg("looking up mapping")
+	logger.Debug().Str("endpoint", "get_mapping").Str("number", number).Msg("looking up mapping")
 
-	resp, err := h.svc.LookupMapping(smsNumber)
+	resp, err := h.svc.LookupMapping(number)
 	if err != nil {
 		if errors.Is(err, service.ErrMappingNotFound) {
-			logger.Warn().Str("endpoint", "get_mapping").Str("sms_number", smsNumber).Msg("mapping not found")
+			logger.Warn().Str("endpoint", "get_mapping").Str("number", number).Msg("mapping not found")
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
-		logger.Error().Str("endpoint", "get_mapping").Str("sms_number", smsNumber).Err(err).Msg("failed to lookup mapping")
+		logger.Error().Str("endpoint", "get_mapping").Str("number", number).Err(err).Msg("failed to lookup mapping")
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	logger.Info().Str("endpoint", "get_mapping").Str("sms_number", smsNumber).Str("room_id", resp.RoomID).Msg("mapping found")
+	logger.Info().Str("endpoint", "get_mapping").Str("number", number).Str("room_id", resp.RoomID).Msg("mapping found")
 	return c.JSON(http.StatusOK, resp)
 }
 
