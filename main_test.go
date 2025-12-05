@@ -470,27 +470,12 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		// Retrieve mapping
-		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B9998887777", nil, headers)
+		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=9998887777", nil, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
-			t.Logf("get mapping returned non-200 status; got %d: %s", resp.StatusCode, string(body))
-			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, fmt.Sprintf("%d", mappingReq.Number), mappingReq.MatrixID); err == nil {
-					t.Logf("created mapping variant %s for number %d", v, mappingReq.Number)
-					// retry GET
-					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B9998887777", nil, headers)
-					if err != nil {
-						t.Fatalf("request failed: %v", err)
-					}
-				} else {
-					t.Skip("mapping not found and creation attempts failed; skipping assertion")
-				}
-			}
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("unexpected status code %d: %s", resp.StatusCode, string(body))
-			}
+			t.Fatalf("get mapping returned non-200 status; got %d: %s", resp.StatusCode, string(body))
 		}
 
 		var mappingResp models.MappingResponse
@@ -533,25 +518,13 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		// Retrieve mapping and check user_name
-		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B1234509876", nil, headers)
+		resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=1234509876", nil, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
-			if resp.StatusCode == http.StatusBadRequest {
-				if _, err := ensureMappingVariants(t, baseURL, cfg.adminToken, fmt.Sprintf("%d", mappingReq.Number), mappingReq.MatrixID); err == nil {
-					// retry GET
-					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B1234509876", nil, headers)
-					if err != nil {
-						t.Fatalf("request failed: %v", err)
-					}
-				} else {
-					t.Skip("mapping not found and creation attempts failed; skipping assertion")
-				}
-			}
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("unexpected status code %d: %s", resp.StatusCode, string(body))
-			}
+			t.Fatalf("unexpected status code %d: %s", resp.StatusCode, string(body))
+
 		}
 
 		var mappingResp models.MappingResponse
@@ -658,7 +631,7 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 		}
 
 		// Create a direct room between user1 and user2 using CreateDirectRoom
-		aliasKey := fmt.Sprintf("%s|%s", user1Localpart, user2Localpart)
+		aliasKey := fmt.Sprintf("%s_bis|%s_bis", user1Localpart, user2Localpart)
 		createResp, err := matrixClient.CreateDirectRoom(context.Background(), id.UserID(user1MatrixID), id.UserID(user2MatrixID), aliasKey)
 		if err != nil {
 			t.Fatalf("failed to create direct room: %v", err)
