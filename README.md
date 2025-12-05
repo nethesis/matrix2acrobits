@@ -81,4 +81,5 @@ Implemented APIs:
 
 The following features are not yet implemented:
 
-- implement password validation on send messages, currently the password is ignored
+- sendMessage: implement password validation on send messages, currently the password is ignored
+- fetchMessages: implement filtering messages by timestamp, currently last 100 messages are fetched

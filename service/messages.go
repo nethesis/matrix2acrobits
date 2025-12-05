@@ -125,35 +125,21 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMessagesRequest) (*models.FetchMessagesResponse, error) {
 	logger.Debug().Interface("request", req).Msg("fetch messages request received")
 
-	// The user to impersonate is taken from the 'Username' field.
+	// The username sent by the app is always an extension number like 91201
 	userID := s.resolveMatrixUser(strings.TrimSpace(req.Username))
 	if userID == "" {
 		logger.Warn().Msg("fetch messages: empty user ID")
 		return nil, ErrAuthentication
 	}
 
-	since := req.LastID
-	filterAfterEventID := ""
+	logger.Debug().Str("user_id", string(userID)).Msg("syncing messages from matrix")
 
-	// Acrobits might send a Matrix Event ID (starts with $) as last_id.
-	// Matrix Sync requires a stream token (usually starts with s).
-	// If we get an Event ID, we must perform an initial sync (empty since)
-	// and let the Matrix client filter the results to return only messages after that event.
-	if strings.HasPrefix(since, "$") {
-		logger.Debug().Str("last_id", since).Msg("received event ID as last_id, performing initial sync with event filtering")
-		filterAfterEventID = since
-		since = ""
-	}
-
-	logger.Debug().Str("user_id", string(userID)).Str("since", since).Msg("syncing messages from matrix")
-
-	resp, err := s.matrixClient.Sync(ctx, userID, since, filterAfterEventID)
+	resp, err := s.matrixClient.Sync(ctx, userID)
 	if err != nil {
 		// If the token is invalid (e.g. expired or from a different session), retry with a full sync.
 		if strings.Contains(err.Error(), "Invalid stream token") || strings.Contains(err.Error(), "M_UNKNOWN") {
 			logger.Warn().Err(err).Msg("invalid stream token, retrying with full sync")
-			since = ""
-			resp, err = s.matrixClient.Sync(ctx, userID, since, filterAfterEventID)
+			resp, err = s.matrixClient.Sync(ctx, userID)
 		}
 	}
 	if err != nil {
@@ -163,7 +149,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 	received, sent := make([]models.SMS, 0, 8), make([]models.SMS, 0, 8)
 
-	// Resolve the caller's identifier (e.g. "91201")
+	// Resolve the caller's identifier (e.g. "91201" -> "201")
 	callerIdentifier := s.resolveMatrixIDToIdentifier(string(userID))
 
 	for _, room := range resp.Rooms.Join {
@@ -295,7 +281,9 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 
 	// No mapping found, return the original Matrix ID
 	return matrixID
-} // resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
+}
+
+// resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
 func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roomID id.RoomID, myMatrixID string) string {
 	aliases := s.matrixClient.GetRoomAliases(ctx, roomID)
 	my := strings.TrimSpace(myMatrixID)

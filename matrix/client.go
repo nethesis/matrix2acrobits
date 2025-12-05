@@ -98,12 +98,11 @@ func (mc *MatrixClient) SendMessage(ctx context.Context, userID id.UserID, roomI
 }
 
 // Sync performs a sync for the specified user to fetch messages.
-// If filterAfterEventID is provided (non-empty), uses post-processing to filter events.
-func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID, since, filterAfterEventID string) (*mautrix.RespSync, error) {
+func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID) (*mautrix.RespSync, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	logger.Debug().Str("user_id", string(userID)).Str("since", since).Str("filter_after_event_id", filterAfterEventID).Msg("matrix: performing sync")
+	logger.Debug().Str("user_id", string(userID)).Msg("matrix: performing sync")
 
 	mc.cli.UserID = userID
 
@@ -127,35 +126,10 @@ func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID, since, filte
 	logger.Debug().Str("user_id", string(userID)).Str("filter", filterJSON).Msg("matrix: using message filter for sync")
 
 	// The SyncRequest method signature: SyncRequest(ctx, timeoutMS, since, filter, fullState, setPresence)
-	resp, err := mc.cli.SyncRequest(ctx, 30000, since, filterJSON, false, event.PresenceOnline)
+	resp, err := mc.cli.SyncRequest(ctx, 30000, "", filterJSON, false, event.PresenceOnline)
 	if err != nil {
 		logger.Error().Str("user_id", string(userID)).Err(err).Msg("matrix: sync failed")
 		return nil, err
-	}
-
-	// Post-process: If filterAfterEventID is provided, filter room timelines to only include events after it
-	// This is necessary because the Matrix spec doesn't support server-side filtering by event ID
-	if filterAfterEventID != "" {
-		logger.Debug().Str("user_id", string(userID)).Str("filter_after_event_id", filterAfterEventID).Msg("matrix: filtering sync results by event ID")
-		for roomID, room := range resp.Rooms.Join {
-			foundEvent := false
-			// Find the index of the target event
-			for j, evt := range room.Timeline.Events {
-				if string(evt.ID) == filterAfterEventID {
-					// Keep only events after this one
-					room.Timeline.Events = room.Timeline.Events[j+1:]
-					resp.Rooms.Join[roomID] = room
-					logger.Debug().Str("user_id", string(userID)).Str("room_id", roomID.String()).Int("events_removed", j+1).Msg("matrix: filtered room timeline")
-					foundEvent = true
-					break
-				}
-			}
-			if !foundEvent && len(room.Timeline.Events) > 0 {
-				// Event not found in this timeline window - the requested event is older than what we got
-				// Keep all events since they're all newer than the requested event
-				logger.Debug().Str("user_id", string(userID)).Str("room_id", roomID.String()).Msg("matrix: filter event not found in timeline, keeping all events")
-			}
-		}
 	}
 
 	logger.Debug().Str("user_id", string(userID)).Int("rooms", len(resp.Rooms.Join)).Msg("matrix: sync completed")
