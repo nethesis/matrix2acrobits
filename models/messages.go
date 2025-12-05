@@ -45,15 +45,6 @@ type SMS struct {
 }
 
 // Message is a helper struct for internal use.
-type Message struct {
-	ID          string
-	SendingDate string
-	Sender      string
-	Recipient   string
-	Text        string
-	ContentType string
-	StreamID    string
-}
 
 // PushTokenReportRequest mirrors the Acrobits push token reporter POST JSON schema.
 type PushTokenReportRequest struct {

@@ -66,29 +66,6 @@ func TestMappingRequest_Marshal(t *testing.T) {
 	assert.Equal(t, req.MatrixID, req2.MatrixID)
 }
 
-func TestMessage_Marshal(t *testing.T) {
-	msg := Message{
-		ID:          "$event123",
-		SendingDate: "2025-01-01T00:00:00Z",
-		Sender:      "@user:example.com",
-		Recipient:   "!room:example.com",
-		Text:        "Test message",
-		ContentType: "m.text",
-		StreamID:    "!room:example.com",
-	}
-
-	data, err := json.Marshal(msg)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, data)
-
-	var msg2 Message
-	err = json.Unmarshal(data, &msg2)
-	assert.NoError(t, err)
-	assert.Equal(t, msg.ID, msg2.ID)
-	assert.Equal(t, msg.Text, msg2.Text)
-	assert.Equal(t, msg.Sender, msg2.Sender)
-}
-
 func TestSendMessageResponse_Marshal(t *testing.T) {
 	resp := SendMessageResponse{
 		ID: "$event123",

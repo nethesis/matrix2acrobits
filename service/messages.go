@@ -32,8 +32,9 @@ type MessageService struct {
 	pushTokenDB  *db.Database
 	now          func() time.Time
 
-	mu       sync.RWMutex
-	mappings map[string]mappingEntry
+	mu          sync.RWMutex
+	mappings    map[string]mappingEntry
+	batchTokens map[string]string // userID -> next_batch token
 }
 
 type mappingEntry struct {
@@ -52,6 +53,7 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 		pushTokenDB:  pushTokenDB,
 		now:          time.Now,
 		mappings:     make(map[string]mappingEntry),
+		batchTokens:  make(map[string]string),
 	}
 }
 
@@ -134,25 +136,17 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 	logger.Debug().Str("user_id", string(userID)).Msg("syncing messages from matrix")
 
-	rooms, err := s.matrixClient.ListJoinedRooms(ctx, userID)
-	if err != nil {
-		logger.Error().Str("user_id", string(userID)).Err(err).Msg("failed to list joined rooms")
-	} else {
-		logger.Debug().Str("user_id", string(userID)).Int("joined_room_count", len(rooms)).Msg("fetched joined rooms")
+	// Retrieve the last batch token for this user
+	batchToken := s.getBatchToken(string(userID))
+	logger.Debug().Str("user_id", string(userID)).Str("batch_token", batchToken).Msg("using batch token for incremental sync")
 
-		// Print each joined room (stdout) and also log them for debug
-		for _, r := range rooms {
-			fmt.Println(r)
-			logger.Debug().Str("room_id", string(r)).Msg("joined room")
-		}
-	}
-
-	resp, err := s.matrixClient.Sync(ctx, userID)
+	resp, err := s.matrixClient.Sync(ctx, userID, batchToken)
 	if err != nil {
 		// If the token is invalid (e.g. expired or from a different session), retry with a full sync.
 		if strings.Contains(err.Error(), "Invalid stream token") || strings.Contains(err.Error(), "M_UNKNOWN") {
 			logger.Warn().Err(err).Msg("invalid stream token, retrying with full sync")
-			resp, err = s.matrixClient.Sync(ctx, userID)
+			s.clearBatchToken(string(userID))
+			resp, err = s.matrixClient.Sync(ctx, userID, "")
 		}
 	}
 	if err != nil {
@@ -160,64 +154,68 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 		return nil, fmt.Errorf("sync messages: %w", mapAuthErr(err))
 	}
 
+	// Store the next_batch token for subsequent calls
+	if resp.NextBatch != "" {
+		s.setBatchToken(string(userID), resp.NextBatch)
+		logger.Debug().Str("user_id", string(userID)).Str("next_batch", resp.NextBatch).Msg("stored next batch token")
+	}
+
 	received, sent := make([]models.SMS, 0, 8), make([]models.SMS, 0, 8)
 
 	// Resolve the caller's identifier (e.g. "91201" -> "201")
 	callerIdentifier := s.resolveMatrixIDToIdentifier(string(userID))
 
-	for _, room := range resp.Rooms.Join {
+	for roomID, room := range resp.Rooms.Join {
 		for _, evt := range room.Timeline.Events {
 			if evt.Type != event.EventMessage {
 				continue
 			}
-			msg := convertEvent(evt)
+
+			eventRoomID := evt.RoomID
+			if eventRoomID == "" {
+				eventRoomID = roomID
+			}
+
+			logger.Debug().Str("event_id", string(evt.ID)).Str("room_id", string(eventRoomID)).Msg("processing message event")
+
+			body := ""
+			if b, ok := evt.Content.Raw["body"].(string); ok {
+				body = b
+			}
+			sms := models.SMS{
+				SMSID:       string(evt.ID),
+				SendingDate: time.UnixMilli(evt.Timestamp).UTC().Format(time.RFC3339),
+				SMSText:     body,
+				ContentType: "text/plain",
+				StreamID:    string(roomID),
+			}
 
 			// Determine if I sent the message
-			senderMatrixID := msg.Sender
+			senderMatrixID := string(evt.Sender)
 			isSent := isSentBy(senderMatrixID, string(userID))
 
 			// Remap sender to identifier (e.g. "202" or "91201")
-			msg.Sender = string(s.resolveMatrixUser(senderMatrixID))
+			sms.Sender = string(s.resolveMatrixIDToIdentifier(senderMatrixID))
 
 			// Determine Recipient
 			if isSent {
 				// I sent it. Recipient is the other person in the room.
-				other := s.resolveRoomIDToOtherIdentifier(ctx, evt.RoomID, string(userID))
-				if other != "" {
-					msg.Recipient = other
-				}
-				// If other not found, msg.Recipient remains RoomID (default from convertEvent)
+				other := s.resolveRoomIDToOtherIdentifier(ctx, eventRoomID, string(userID))
+				sms.Recipient = other
+				sent = append(sent, sms)
 			} else {
 				// I received it. Recipient is me.
-				msg.Recipient = callerIdentifier
+				sms.Recipient = callerIdentifier
+				received = append(received, sms)
 			}
-
-			// Convert internal Message to SMS
-			sms := models.SMS{
-				SMSID:       msg.ID,
-				SendingDate: msg.SendingDate,
-				SMSText:     msg.Text,
-				ContentType: msg.ContentType,
-				StreamID:    msg.StreamID,
-			}
-
 			// Debug each processed message
 			logger.Debug().
-				Str("event_id", msg.ID).
-				Str("room_id", msg.StreamID).
-				Str("sender", msg.Sender).
-				Str("recipient", msg.Recipient).
+				Str("sender", sms.Sender).
+				Str("recipient", sms.Recipient).
 				Bool("is_sent", isSent).
 				Interface("sms", sms).
 				Msg("processed message from sync")
 
-			if isSent {
-				sms.Recipient = msg.Recipient
-				sent = append(sent, sms)
-			} else {
-				sms.Sender = msg.Sender
-				received = append(received, sms)
-			}
 		}
 	}
 
@@ -299,22 +297,61 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 // resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
 func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roomID id.RoomID, myMatrixID string) string {
 	aliases := s.matrixClient.GetRoomAliases(ctx, roomID)
-	my := strings.TrimSpace(myMatrixID)
 
 	for _, alias := range aliases {
-		parts := strings.SplitN(alias, "|", 2)
+		logger.Debug().Str("alias", alias).Msg("processing room alias")
+
+		// Normalize alias to form "localpart1|localpart2" (strip leading '#' and domain suffix)
+		normalizeLocal := func(v string) string {
+			v = strings.TrimSpace(v)
+			v = strings.TrimPrefix(v, "#")
+			v = strings.TrimPrefix(v, "@")
+			if i := strings.IndexByte(v, ':'); i != -1 {
+				v = v[:i]
+			}
+			return strings.ToLower(strings.TrimSpace(v))
+		}
+
+		norm := normalizeLocal(alias)
+		parts := strings.SplitN(norm, "|", 2)
 		if len(parts) != 2 {
+			logger.Debug().Str("alias", alias).Msg("room alias does not conform to expected format after normalization")
 			continue
 		}
 		left := strings.TrimSpace(parts[0])
 		right := strings.TrimSpace(parts[1])
 
-		if strings.EqualFold(left, my) {
-			return right
+		me := normalizeLocal(myMatrixID)
+
+		var otherLocal string
+		if strings.EqualFold(left, me) {
+			logger.Debug().Str("my_matrix_id", myMatrixID).Str("other_localpart", right).Msg("resolved other participant from room alias")
+			otherLocal = right
+		} else if strings.EqualFold(right, me) {
+			logger.Debug().Str("my_matrix_id", myMatrixID).Str("other_localpart", left).Msg("resolved other participant from room alias")
+			otherLocal = left
+		} else {
+			continue
 		}
-		if strings.EqualFold(right, my) {
-			return left
+
+		logger.Debug().Str("other_localpart", otherLocal).Msg("returning other participant localpart as identifier")
+
+		// Now transform the other localpart to a matrix ID, then search inside mapping: return the number
+		s.mu.RLock()
+		for _, entry := range s.mappings {
+			normMatrixID := normalizeLocal(entry.MatrixID)
+			if normMatrixID == otherLocal {
+				s.mu.RUnlock()
+				// Prefer Number as the identifier
+				if entry.Number != 0 {
+					logger.Debug().Str("other_localpart", otherLocal).Int("number", entry.Number).Msg("resolved other participant to number from mapping")
+					return fmt.Sprintf("%d", entry.Number)
+				}
+			}
 		}
+		s.mu.RUnlock()
+
+		return otherLocal
 	}
 
 	return ""
@@ -445,7 +482,9 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 	}
 	entry = s.setMapping(entry)
 	return s.buildMappingResponse(entry), nil
-} // LoadMappingsFromFile loads mappings from a JSON file.
+}
+
+// LoadMappingsFromFile loads mappings from a JSON file.
 // See docs/example-mapping.json for the expected format.
 // This is typically called at startup if MAPPING_FILE environment variable is set.
 func (s *MessageService) LoadMappingsFromFile(filePath string) error {
@@ -496,28 +535,6 @@ func normalizeMappingKey(value string) string {
 
 func isSentBy(sender, username string) bool {
 	return strings.EqualFold(normalizeMatrixID(sender), normalizeMatrixID(username))
-}
-
-func convertEvent(evt *event.Event) models.Message {
-	body := ""
-	if b, ok := evt.Content.Raw["body"].(string); ok {
-		body = b
-	}
-	contentType := "text/plain"
-	if mt, ok := evt.Content.Raw["msgtype"].(string); ok {
-		contentType = mt
-	}
-
-	sendingDate := time.UnixMilli(evt.Timestamp).UTC().Format(time.RFC3339)
-	return models.Message{
-		ID:          string(evt.ID),
-		SendingDate: sendingDate,
-		Sender:      string(evt.Sender),
-		Recipient:   string(evt.RoomID),
-		Text:        body,
-		ContentType: contentType,
-		StreamID:    string(evt.RoomID),
-	}
 }
 
 func mapAuthErr(err error) error {
@@ -594,4 +611,25 @@ func (s *MessageService) ReportPushToken(ctx context.Context, req *models.PushTo
 
 	logger.Info().Str("selector", selector).Msg("push token reported and saved")
 	return &models.PushTokenReportResponse{}, nil
+}
+
+// getBatchToken retrieves the stored batch token for a user
+func (s *MessageService) getBatchToken(userID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.batchTokens[userID]
+}
+
+// setBatchToken stores the batch token for a user
+func (s *MessageService) setBatchToken(userID string, token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batchTokens[userID] = token
+}
+
+// clearBatchToken removes the batch token for a user
+func (s *MessageService) clearBatchToken(userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.batchTokens, userID)
 }

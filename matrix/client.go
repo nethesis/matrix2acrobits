@@ -2,7 +2,6 @@ package matrix
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -97,42 +96,25 @@ func (mc *MatrixClient) SendMessage(ctx context.Context, userID id.UserID, roomI
 	return resp, nil
 }
 
-// Sync performs a sync for the specified user to fetch messages.
-func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID) (*mautrix.RespSync, error) {
+// Sync performs a sync for the specified user with an optional batch token for incremental sync.
+// If batchToken is empty, a full sync is performed.
+func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID, batchToken string) (*mautrix.RespSync, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	logger.Debug().Str("user_id", string(userID)).Msg("matrix: performing sync")
+	logger.Debug().Str("user_id", string(userID)).Str("batch_token", batchToken).Msg("matrix: performing sync with token")
 
 	mc.cli.UserID = userID
 
-	// Create a filter that only returns message events to optimize bandwidth
-	filter := &mautrix.Filter{
-		Room: &mautrix.RoomFilter{
-			Timeline: &mautrix.FilterPart{
-				Types: []event.Type{event.EventMessage},
-				Limit: 100, // Reasonable limit to get enough context
-			},
-		},
-	}
-
-	// Marshal the filter to JSON string for the SyncRequest
-	filterBytes, err := json.Marshal(filter)
-	if err != nil {
-		logger.Error().Str("user_id", string(userID)).Err(err).Msg("matrix: failed to marshal filter")
-		return nil, fmt.Errorf("marshal filter: %w", err)
-	}
-	filterJSON := string(filterBytes)
-	logger.Debug().Str("user_id", string(userID)).Str("filter", filterJSON).Msg("matrix: using message filter for sync")
-
 	// The SyncRequest method signature: SyncRequest(ctx, timeoutMS, since, filter, fullState, setPresence)
-	resp, err := mc.cli.SyncRequest(ctx, 30000, "", filterJSON, false, event.PresenceOnline)
+	// Pass batchToken as the 'since' parameter for incremental sync
+	resp, err := mc.cli.SyncRequest(ctx, 30000, batchToken, "", true, "online")
 	if err != nil {
 		logger.Error().Str("user_id", string(userID)).Err(err).Msg("matrix: sync failed")
 		return nil, err
 	}
 
-	logger.Debug().Str("user_id", string(userID)).Int("rooms", len(resp.Rooms.Join)).Msg("matrix: sync completed")
+	logger.Debug().Str("user_id", string(userID)).Int("rooms", len(resp.Rooms.Join)).Str("next_batch", resp.NextBatch).Msg("matrix: sync completed")
 	return resp, nil
 }
 
@@ -195,6 +177,7 @@ func (mc *MatrixClient) ResolveRoomAlias(ctx context.Context, roomAlias string) 
 
 func (mc *MatrixClient) GetRoomAliases(ctx context.Context, roomID id.RoomID) []string {
 	// This action does not require impersonation, so no lock is needed.
+	logger.Debug().Str("room_id", roomID.String()).Msg("matrix: fetching room aliases")
 	resp, err := mc.cli.GetAliases(ctx, roomID)
 	if err != nil {
 		logger.Error().Str("room_id", roomID.String()).Err(err).Msg("matrix: failed to get room aliases")
