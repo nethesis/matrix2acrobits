@@ -168,28 +168,10 @@ func (mc *MatrixClient) CreateDirectRoom(ctx context.Context, userID id.UserID, 
 func (mc *MatrixClient) JoinRoom(ctx context.Context, userID id.UserID, roomID id.RoomID) (*mautrix.RespJoinRoom, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-
 	mc.cli.UserID = userID
-
-	// Extract homeserver from room ID for federated joins
-	// Room ID format: !opaque:homeserver.name
-	roomIDStr := string(roomID)
 	req := &mautrix.ReqJoinRoom{}
-
-	if idx := strings.Index(roomIDStr, ":"); idx > 0 && idx < len(roomIDStr)-1 {
-		roomServerName := roomIDStr[idx+1:]
-
-		// Only add Via if the room is on a different homeserver (federated)
-		if roomServerName != "" && roomServerName != mc.homeserverName {
-			req.Via = []string{roomServerName}
-			logger.Debug().Str("user_id", string(userID)).Str("room_id", roomIDStr).Str("room_server", roomServerName).Str("local_server", mc.homeserverName).Msg("matrix: joining federated room with homeserver hint")
-		} else {
-			logger.Debug().Str("user_id", string(userID)).Str("room_id", roomIDStr).Msg("matrix: joining local room without via")
-		}
-	}
-
-	logger.Debug().Str("user_id", string(userID)).Str("room_id", roomIDStr).Bool("has_via", len(req.Via) > 0).Msg("matrix: calling JoinRoom")
-	return mc.cli.JoinRoom(ctx, roomIDStr, req)
+	logger.Debug().Str("user_id", string(userID)).Str("room_id", string(roomID)).Msg("matrix: joining local room")
+	return mc.cli.JoinRoom(ctx, string(roomID), req)
 }
 
 // ResolveRoomAlias resolves a room alias to a room ID.

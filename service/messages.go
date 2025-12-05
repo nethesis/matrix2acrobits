@@ -339,6 +339,7 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 	logger.Debug().Str("key", key).Msg("Searching for direct room with alias")
 	roomID := s.matrixClient.ResolveRoomAlias(ctx, key)
 	if roomID != "" {
+		logger.Debug().Str("alias", key).Str("room_id", roomID).Msg("direct room already exists")
 		return id.RoomID(roomID), nil
 	}
 
