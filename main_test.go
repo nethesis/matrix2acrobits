@@ -651,13 +651,14 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 			t.Fatalf("failed to create matrix client: %v", err)
 		}
 
-		roomName := fmt.Sprintf("Phone Test Room %d", time.Now().Unix())
-		createResp, err := matrixClient.CreateRoom(context.Background(), id.UserID(user1MatrixID), roomName, []id.UserID{id.UserID(user2MatrixID)})
+		// Create a direct room between user1 and user2 using CreateDirectRoom
+		aliasKey := fmt.Sprintf("phone_test_%d", time.Now().Unix())
+		createResp, err := matrixClient.CreateDirectRoom(context.Background(), id.UserID(user1MatrixID), id.UserID(user2MatrixID), aliasKey)
 		if err != nil {
-			t.Fatalf("failed to create room: %v", err)
+			t.Fatalf("failed to create direct room: %v", err)
 		}
 		roomID := createResp.RoomID
-		t.Logf("Created room %s", roomID)
+		t.Logf("Created direct room %s", roomID)
 
 		// Step 2: Join the room as user2
 		_, err = matrixClient.JoinRoom(context.Background(), id.UserID(user2MatrixID), roomID)
@@ -749,13 +750,14 @@ func TestIntegration_RoomMessaging(t *testing.T) {
 			t.Fatalf("failed to create matrix client: %v", err)
 		}
 
-		roomName := fmt.Sprintf("Test Room %d", time.Now().Unix())
-		createResp, err := matrixClient.CreateRoom(context.Background(), id.UserID(user1MatrixID), roomName, []id.UserID{id.UserID(user2MatrixID)})
+		// Create a direct room between user1 and user2 using CreateDirectRoom
+		aliasKey := fmt.Sprintf("test_room_%d", time.Now().Unix())
+		createResp, err := matrixClient.CreateDirectRoom(context.Background(), id.UserID(user1MatrixID), id.UserID(user2MatrixID), aliasKey)
 		if err != nil {
-			t.Fatalf("failed to create room: %v", err)
+			t.Fatalf("failed to create direct room: %v", err)
 		}
 		roomID := createResp.RoomID
-		t.Logf("Created room %s", roomID)
+		t.Logf("Created direct room %s", roomID)
 
 		// Step 2: Join the room as user2
 		_, err = matrixClient.JoinRoom(context.Background(), id.UserID(user2MatrixID), roomID)

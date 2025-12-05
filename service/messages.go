@@ -183,7 +183,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 			// Determine Recipient
 			if isSent {
 				// I sent it. Recipient is the other person in the room.
-				other := s.resolveRoomIDToOtherIdentifier(evt.RoomID, string(userID))
+				other := s.resolveRoomIDToOtherIdentifier(ctx, evt.RoomID, string(userID))
 				if other != "" {
 					msg.Recipient = other
 				}
@@ -201,6 +201,16 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 				ContentType: msg.ContentType,
 				StreamID:    msg.StreamID,
 			}
+
+			// Debug each processed message
+			logger.Debug().
+				Str("event_id", msg.ID).
+				Str("room_id", msg.StreamID).
+				Str("sender", msg.Sender).
+				Str("recipient", msg.Recipient).
+				Bool("is_sent", isSent).
+				Interface("sms", sms).
+				Msg("processed message from sync")
 
 			if isSent {
 				sms.Recipient = msg.Recipient
@@ -308,43 +318,68 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 }
 
 // resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
-func (s *MessageService) resolveRoomIDToOtherIdentifier(roomID id.RoomID, myMatrixID string) string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, entry := range s.mappings {
-		// Find mapping for this room where the Matrix ID is NOT me
-		if entry.RoomID == roomID && !strings.EqualFold(entry.MatrixID, myMatrixID) {
-			// Ignore internal mappings
-			if strings.Contains(entry.Number, "|") {
-				continue
-			}
-			return entry.Number
+func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roomID id.RoomID, myMatrixID string) string {
+	aliases := s.matrixClient.GetRoomAliases(ctx, roomID)
+	my := strings.TrimSpace(myMatrixID)
+
+	for _, alias := range aliases {
+		parts := strings.SplitN(alias, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		left := strings.TrimSpace(parts[0])
+		right := strings.TrimSpace(parts[1])
+
+		if strings.EqualFold(left, my) {
+			return right
+		}
+		if strings.EqualFold(right, my) {
+			return left
 		}
 	}
+
 	return ""
 }
 
-func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, targetUserID id.UserID) (id.RoomID, error) {
-	// Use both user IDs to create a consistent mapping key for the DM.
-	key := fmt.Sprintf("%s|%s", actingUserID, targetUserID)
-	if actingUserID > targetUserID {
-		key = fmt.Sprintf("%s|%s", targetUserID, actingUserID)
+func generateRoomAliasKey(actingUserID id.UserID, targetUserID id.UserID) string {
+	normalize := func(uid id.UserID) string {
+		s := strings.TrimSpace(string(uid))
+		s = strings.TrimPrefix(s, "@")
+		if i := strings.IndexByte(s, ':'); i != -1 {
+			s = s[:i]
+		}
+		return strings.ToLower(s)
 	}
+
+	a := normalize(actingUserID)
+	b := normalize(targetUserID)
+
+	// Ensure deterministic ordering: smaller|larger
+	if a == "" && b == "" {
+		return ""
+	}
+	if a > b {
+		a, b = b, a
+	}
+	return fmt.Sprintf("%s|%s", a, b)
+}
+
+func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, targetUserID id.UserID) (id.RoomID, error) {
+	key := generateRoomAliasKey(actingUserID, targetUserID)
 
 	logger.Debug().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Msg("ensuring direct room exists")
 
-	if entry, ok := s.getMapping(key); ok && entry.RoomID != "" {
-		logger.Debug().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Str("room_id", string(entry.RoomID)).Msg("existing DM room found in cache")
-		return entry.RoomID, nil
+	// Search between existing rooms
+	logger.Debug().Str("key", key).Msg("Searching for direct room with alias")
+	alias, aliasErr := s.matrixClient.ResolveRoomAlias(ctx, key)
+	if aliasErr == nil && alias.RoomID != "" {
+		return alias.RoomID, nil
 	}
-	if !strings.HasPrefix(string(targetUserID), "@") {
-		logger.Warn().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Msg("invalid target user ID format")
-		return "", ErrInvalidRecipient
-	}
+
+	// Create a new direct room
 
 	logger.Info().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Msg("creating new direct room")
-
-	resp, err := s.matrixClient.CreateDirectRoom(ctx, actingUserID, targetUserID)
+	resp, err := s.matrixClient.CreateDirectRoom(ctx, actingUserID, targetUserID, key)
 	if err != nil {
 		logger.Error().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Err(err).Msg("failed to create direct room")
 		return "", err
@@ -357,15 +392,7 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 		return "", fmt.Errorf("join room as target user: %w", err)
 	}
 
-	entry := mappingEntry{
-		Number:    key, // Use the combined key for internal storage
-		MatrixID:  string(targetUserID),
-		RoomID:    resp.RoomID,
-		UpdatedAt: s.now(),
-	}
-	entry = s.setMapping(entry)
-	logger.Info().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Str("room_id", string(resp.RoomID)).Msg("direct room created and cached")
-	return entry.RoomID, nil
+	return resp.RoomID, nil
 }
 
 func (s *MessageService) getMapping(key string) (mappingEntry, bool) {

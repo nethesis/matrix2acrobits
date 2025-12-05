@@ -160,25 +160,26 @@ func (mc *MatrixClient) Sync(ctx context.Context, userID id.UserID, since, filte
 }
 
 // CreateDirectRoom creates a new direct message room impersonating 'userID' and inviting 'targetUserID'.
-func (mc *MatrixClient) CreateDirectRoom(ctx context.Context, userID id.UserID, targetUserID id.UserID) (*mautrix.RespCreateRoom, error) {
+func (mc *MatrixClient) CreateDirectRoom(ctx context.Context, userID id.UserID, targetUserID id.UserID, aliasKey string) (*mautrix.RespCreateRoom, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	logger.Debug().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Msg("matrix: creating direct room")
+	logger.Debug().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Str("alias_key", aliasKey).Msg("matrix: creating direct room")
 
 	mc.cli.UserID = userID
 	req := &mautrix.ReqCreateRoom{
-		Invite:   []id.UserID{targetUserID},
-		Preset:   "trusted_private_chat",
-		IsDirect: true,
+		Invite:        []id.UserID{targetUserID},
+		Preset:        "trusted_private_chat",
+		IsDirect:      true,
+		RoomAliasName: aliasKey,
 	}
 	resp, err := mc.cli.CreateRoom(ctx, req)
 	if err != nil {
-		logger.Error().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Err(err).Msg("matrix: failed to create direct room")
+		logger.Error().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Str("alias_key", aliasKey).Err(err).Msg("matrix: failed to create direct room")
 		return nil, err
 	}
 
-	logger.Info().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Str("room_id", string(resp.RoomID)).Msg("matrix: direct room created")
+	logger.Info().Str("user_id", string(userID)).Str("target_user_id", string(targetUserID)).Str("alias_key", aliasKey).Str("room_id", string(resp.RoomID)).Msg("matrix: direct room created")
 	return resp, nil
 }
 
@@ -210,21 +211,26 @@ func (mc *MatrixClient) JoinRoom(ctx context.Context, userID id.UserID, roomID i
 	return mc.cli.JoinRoom(ctx, roomIDStr, req)
 }
 
-// CreateRoom creates a new room impersonating the specified userID.
-func (mc *MatrixClient) CreateRoom(ctx context.Context, userID id.UserID, name string, invitees []id.UserID) (*mautrix.RespCreateRoom, error) {
-	mc.mu.Lock()
-	defer mc.mu.Unlock()
-
-	mc.cli.UserID = userID
-	req := &mautrix.ReqCreateRoom{
-		Name:   name,
-		Invite: invitees,
-	}
-	return mc.cli.CreateRoom(ctx, req)
-}
-
 // ResolveRoomAlias resolves a room alias to a room ID.
 func (mc *MatrixClient) ResolveRoomAlias(ctx context.Context, roomAlias string) (*mautrix.RespAliasResolve, error) {
 	// This action does not require impersonation, so no lock is needed.
 	return mc.cli.ResolveAlias(ctx, id.RoomAlias(roomAlias))
+}
+
+func (mc *MatrixClient) GetRoomAliases(ctx context.Context, roomID id.RoomID) []string {
+	// This action does not require impersonation, so no lock is needed.
+	resp, err := mc.cli.GetAliases(ctx, roomID)
+	if err != nil {
+		logger.Error().Str("room_id", roomID.String()).Err(err).Msg("matrix: failed to get room aliases")
+		return []string{}
+	}
+	if resp == nil || len(resp.Aliases) == 0 {
+		return []string{}
+	}
+
+	aliases := make([]string, 0, len(resp.Aliases))
+	for _, a := range resp.Aliases {
+		aliases = append(aliases, string(a))
+	}
+	return aliases
 }
