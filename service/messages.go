@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,11 @@ type MessageService struct {
 	mu          sync.RWMutex
 	mappings    map[string]mappingEntry
 	batchTokens map[string]string // userID -> next_batch token
+
+	// Caches for room resolution
+	roomAliasCache       *RoomAliasCache
+	roomAliasesCache     *RoomAliasesCache
+	roomParticipantCache *RoomParticipantCache
 }
 
 type mappingEntry struct {
@@ -48,12 +54,26 @@ type mappingEntry struct {
 
 // NewMessageService wires the provided Matrix client and push token database into the service layer.
 func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Database) *MessageService {
+	// Parse cache TTL from environment, default to 1 hour (3600 seconds)
+	cacheTTLStr := os.Getenv("CACHE_TTL_SECONDS")
+	cacheTTLSeconds := 3600
+	if cacheTTLStr != "" {
+		if parsed, err := strconv.Atoi(cacheTTLStr); err == nil && parsed > 0 {
+			cacheTTLSeconds = parsed
+		}
+	}
+	cacheTTL := time.Duration(cacheTTLSeconds) * time.Second
+	logger.Debug().Int("cache_ttl_seconds", cacheTTLSeconds).Msg("initialized message service with cache TTL")
+
 	return &MessageService{
-		matrixClient: matrixClient,
-		pushTokenDB:  pushTokenDB,
-		now:          time.Now,
-		mappings:     make(map[string]mappingEntry),
-		batchTokens:  make(map[string]string),
+		matrixClient:         matrixClient,
+		pushTokenDB:          pushTokenDB,
+		now:                  time.Now,
+		mappings:             make(map[string]mappingEntry),
+		batchTokens:          make(map[string]string),
+		roomAliasCache:       NewRoomAliasCache(cacheTTL),
+		roomAliasesCache:     NewRoomAliasesCache(cacheTTL),
+		roomParticipantCache: NewRoomParticipantCache(cacheTTL),
 	}
 }
 
@@ -296,7 +316,27 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 
 // resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
 func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roomID id.RoomID, myMatrixID string) string {
-	aliases := s.matrixClient.GetRoomAliases(ctx, roomID)
+	// Use a cache key that includes both the room and the viewer to handle different perspectives
+	cacheKey := fmt.Sprintf("%s|%s", string(roomID), myMatrixID)
+
+	// Check cache first
+	if cachedIdentifier := s.roomParticipantCache.Get(cacheKey); cachedIdentifier != "" {
+		logger.Debug().Str("room_id", string(roomID)).Str("my_matrix_id", myMatrixID).Str("cached_identifier", cachedIdentifier).Msg("resolved other participant from cache")
+		return cachedIdentifier
+	}
+
+	// Check if aliases are cached
+	var aliases []string
+	if cachedAliases := s.roomAliasesCache.Get(string(roomID)); cachedAliases != nil {
+		aliases = cachedAliases
+		logger.Debug().Str("room_id", string(roomID)).Int("alias_count", len(aliases)).Msg("fetched room aliases from cache")
+	} else {
+		// Fetch aliases from Matrix server
+		aliases = s.matrixClient.GetRoomAliases(ctx, roomID)
+		if len(aliases) > 0 {
+			s.roomAliasesCache.Set(string(roomID), aliases)
+		}
+	}
 
 	for _, alias := range aliases {
 		logger.Debug().Str("alias", alias).Msg("processing room alias")
@@ -344,13 +384,17 @@ func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roo
 				s.mu.RUnlock()
 				// Prefer Number as the identifier
 				if entry.Number != 0 {
-					logger.Debug().Str("other_localpart", otherLocal).Int("number", entry.Number).Msg("resolved other participant to number from mapping")
-					return fmt.Sprintf("%d", entry.Number)
+					identifier := fmt.Sprintf("%d", entry.Number)
+					s.roomParticipantCache.Set(cacheKey, identifier)
+					logger.Debug().Str("other_localpart", otherLocal).Int("number", entry.Number).Msg("resolved other participant to number from mapping and cached")
+					return identifier
 				}
 			}
 		}
 		s.mu.RUnlock()
 
+		// Cache the unresolved localpart and return it
+		s.roomParticipantCache.Set(cacheKey, otherLocal)
 		return otherLocal
 	}
 
@@ -385,11 +429,18 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 
 	logger.Debug().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Msg("ensuring direct room exists")
 
+	// Check cache first
+	if cachedRoomID := s.roomAliasCache.Get(key); cachedRoomID != "" {
+		logger.Debug().Str("alias", key).Str("room_id", cachedRoomID).Msg("direct room found in cache")
+		return id.RoomID(cachedRoomID), nil
+	}
+
 	// Search between existing rooms
 	logger.Debug().Str("key", key).Msg("Searching for direct room with alias")
 	roomID := s.matrixClient.ResolveRoomAlias(ctx, key)
 	if roomID != "" {
-		logger.Debug().Str("alias", key).Str("room_id", roomID).Msg("direct room already exists")
+		s.roomAliasCache.Set(key, roomID)
+		logger.Debug().Str("alias", key).Str("room_id", roomID).Msg("direct room already exists and cached")
 		return id.RoomID(roomID), nil
 	}
 
@@ -400,6 +451,9 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 		logger.Error().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Err(err).Msg("failed to create direct room")
 		return "", err
 	}
+
+	// Cache the newly created room
+	s.roomAliasCache.Set(key, string(resp.RoomID))
 
 	// Ensure the target user joins the room so they can see it in their sync
 	_, err = s.matrixClient.JoinRoom(ctx, targetUserID, resp.RoomID)

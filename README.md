@@ -19,6 +19,7 @@ The proxy is configured via environment variables. Minimal required env:
 - `LOGLEVEL` (optional): logging verbosity level - `DEBUG`, `INFO`, `WARNING`, `CRITICAL` (default: `INFO`)
 - `MAPPING_FILE` (optional): path to a JSON file containing -to-Matrix mappings to load at startup
 - `PUSH_TOKEN_DB_PATH` (optional): path to a database file for storing push tokens
+- `CACHE_TTL_SECONDS` (optional): time-to-live for in-memory cache entries (default: `3600` seconds)
 
 Building and running
 
@@ -82,4 +83,4 @@ Implemented APIs:
 The following features are not yet implemented:
 
 - sendMessage: implement password validation on send messages, currently the password is ignored
-- fetchMessages: implement filtering messages by timestamp, currently last 100 messages are fetched
+- push tokens to Acrobits
