@@ -37,11 +37,11 @@ type MessageService struct {
 }
 
 type mappingEntry struct {
-	Number     string
+	Number     int
 	MatrixID   string
 	RoomID     id.RoomID
 	UserName   string
-	SubNumbers []string
+	SubNumbers []int
 	UpdatedAt  time.Time
 }
 
@@ -257,9 +257,9 @@ func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
 	s.mu.RLock()
 	for _, entry := range s.mappings {
 		for _, subNum := range entry.SubNumbers {
-			if strings.EqualFold(strings.TrimSpace(subNum), identifier) {
+			if strings.EqualFold(fmt.Sprintf("%d", subNum), identifier) {
 				s.mu.RUnlock()
-				logger.Debug().Str("original_identifier", identifier).Str("sub_number", subNum).Str("resolved_user", entry.MatrixID).Msg("identifier resolved from sub_number mapping")
+				logger.Debug().Str("original_identifier", identifier).Int("sub_number", subNum).Str("resolved_user", entry.MatrixID).Msg("identifier resolved from sub_number mapping")
 				return id.UserID(entry.MatrixID)
 			}
 		}
@@ -269,9 +269,7 @@ func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
 	// Could not resolve
 	logger.Warn().Str("identifier", identifier).Msg("identifier could not be resolved to a Matrix user ID")
 	return ""
-}
-
-// resolveMatrixIDToIdentifier resolves a Matrix user ID to a preferred identifier (Number, then UserName).
+} // resolveMatrixIDToIdentifier resolves a Matrix user ID to a preferred identifier (Number, then UserName).
 // The resolution logic:
 //   - First checks if any sub_number matches the matrix_id; if found, returns the main number
 //   - Then checks if the main number matches the matrix_id; if found, returns the number
@@ -286,24 +284,10 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 	defer s.mu.RUnlock()
 	for _, entry := range s.mappings {
 		if strings.EqualFold(entry.MatrixID, matrixID) {
-			// Ignore internal mappings (containing pipe)
-			if strings.Contains(entry.Number, "|") {
-				continue
-			}
-
-			// First try to match against sub_numbers
-			for _, subNum := range entry.SubNumbers {
-				if strings.EqualFold(strings.TrimSpace(subNum), matrixID) {
-					// Sub_number matched, return the main number instead
-					logger.Debug().Str("matrix_id", matrixID).Str("sub_number", subNum).Str("number", entry.Number).Msg("resolved matrix id to number via sub_number")
-					return entry.Number
-				}
-			}
-
 			// Prefer Number as the identifier
-			if entry.Number != "" {
-				logger.Debug().Str("matrix_id", matrixID).Str("number", entry.Number).Msg("resolved matrix id to number")
-				return entry.Number
+			if entry.Number != 0 {
+				logger.Debug().Str("matrix_id", matrixID).Int("number", entry.Number).Msg("resolved matrix id to number")
+				return fmt.Sprintf("%d", entry.Number)
 			}
 			// Fallback to UserName
 			if entry.UserName != "" {
@@ -315,9 +299,7 @@ func (s *MessageService) resolveMatrixIDToIdentifier(matrixID string) string {
 
 	// No mapping found, return the original Matrix ID
 	return matrixID
-}
-
-// resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
+} // resolveRoomIDToOtherIdentifier finds the identifier of the "other" participant in a room.
 func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roomID id.RoomID, myMatrixID string) string {
 	aliases := s.matrixClient.GetRoomAliases(ctx, roomID)
 	my := strings.TrimSpace(myMatrixID)
@@ -376,8 +358,7 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 		return alias.RoomID, nil
 	}
 
-	// Create a new direct room
-
+	// Create a new direct room with the alias
 	logger.Info().Str("acting_user", string(actingUserID)).Str("target_user", string(targetUserID)).Msg("creating new direct room")
 	resp, err := s.matrixClient.CreateDirectRoom(ctx, actingUserID, targetUserID, key)
 	if err != nil {
@@ -396,38 +377,51 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 }
 
 func (s *MessageService) getMapping(key string) (mappingEntry, bool) {
-	normalized := normalizeMappingKey(key)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	entry, ok := s.mappings[normalized]
+	entry, ok := s.mappings[key]
 	return entry, ok
 }
 
 func (s *MessageService) setMapping(entry mappingEntry) mappingEntry {
-	entry.Number = strings.TrimSpace(entry.Number)
-	normalized := normalizeMappingKey(entry.Number)
-	if normalized == "" {
-		logger.Warn().Msg("attempted to set mapping with empty key")
+	if entry.Number == 0 {
+		logger.Warn().Msg("attempted to set mapping with empty number")
 		return entry
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry.UpdatedAt = s.now()
-	s.mappings[normalized] = entry
-	logger.Debug().Str("key", entry.Number).Str("room_id", string(entry.RoomID)).Msg("mapping stored")
+	s.mappings[fmt.Sprintf("%d", entry.Number)] = entry
+	logger.Debug().Int("number", entry.Number).Str("room_id", string(entry.RoomID)).Msg("mapping stored")
 	return entry
 }
 
 // LookupMapping returns the currently stored mapping for a given key (phone number or user pair).
+// It searches:
+//   - First by the main number
+//   - Then by any sub_number in the mappings
 func (s *MessageService) LookupMapping(key string) (*models.MappingResponse, error) {
-	entry, ok := s.getMapping(key)
-	if !ok {
-		return nil, ErrMappingNotFound
+	// Try to find by main number first
+	if entry, ok := s.getMapping(key); ok {
+		return s.buildMappingResponse(entry), nil
 	}
-	return s.buildMappingResponse(entry), nil
-}
 
-// ListMappings returns all stored mappings.
+	// Try to find by sub_number
+	key = strings.TrimSpace(key)
+	s.mu.RLock()
+	for _, entry := range s.mappings {
+		for _, subNum := range entry.SubNumbers {
+			if strings.EqualFold(fmt.Sprintf("%d", subNum), key) {
+				s.mu.RUnlock()
+				logger.Debug().Str("key", key).Int("sub_number", subNum).Int("number", entry.Number).Msg("mapping found via sub_number")
+				return s.buildMappingResponse(entry), nil
+			}
+		}
+	}
+	s.mu.RUnlock()
+
+	return nil, ErrMappingNotFound
+} // ListMappings returns all stored mappings.
 func (s *MessageService) ListMappings() ([]*models.MappingResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -441,34 +435,21 @@ func (s *MessageService) ListMappings() ([]*models.MappingResponse, error) {
 // SaveMapping persists a new mapping via the admin API.
 // For 1-to-1 messaging, this maps a key (phone number or identifier) to a direct room.
 func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.MappingResponse, error) {
-	number := strings.TrimSpace(req.Number)
-	if number == "" {
+	if req.Number == 0 {
 		return nil, errors.New("number is required")
-	}
-	roomID := strings.TrimSpace(req.RoomID)
-	if roomID == "" {
-		return nil, errors.New("room_id is required")
 	}
 
 	entry := mappingEntry{
-		Number:     number,
+		Number:     req.Number,
 		MatrixID:   strings.TrimSpace(req.MatrixID),
-		RoomID:     id.RoomID(roomID),
 		UserName:   strings.TrimSpace(req.UserName),
 		SubNumbers: req.SubNumbers,
 		UpdatedAt:  s.now(),
 	}
 	entry = s.setMapping(entry)
 	return s.buildMappingResponse(entry), nil
-}
-
-// LoadMappingsFromFile loads mappings from a JSON file in the format:
-//
-//	[
-//	  {"number": "201", "matrix_id": "@giacomo:synapse.gs.nethserver.net", "room_id": "!giacomo-room:synapse.gs.nethserver.net", "user_name": "Giacomo Rossi", "sub_numbers": ["3344", "91201"]},
-//	  {"number": "202", "matrix_id": "@mario:synapse.gs.nethserver.net", "room_id": "!mario-room:synapse.gs.nethserver.net", "user_name": "Mario Bianchi", "sub_numbers": ["3345", "91202"]}
-//	]
-//
+} // LoadMappingsFromFile loads mappings from a JSON file.
+// See docs/example-mapping.json for the expected format.
 // This is typically called at startup if MAPPING_FILE environment variable is set.
 func (s *MessageService) LoadMappingsFromFile(filePath string) error {
 	data, err := os.ReadFile(filePath)
@@ -482,14 +463,13 @@ func (s *MessageService) LoadMappingsFromFile(filePath string) error {
 	}
 
 	for _, req := range mappingArray {
-		if req.Number == "" {
+		if req.Number == 0 {
 			logger.Warn().Msg("skipping mapping with empty number")
 			continue
 		}
 		entry := mappingEntry{
 			Number:     req.Number,
 			MatrixID:   req.MatrixID,
-			RoomID:     id.RoomID(req.RoomID),
 			UserName:   req.UserName,
 			SubNumbers: req.SubNumbers,
 			UpdatedAt:  s.now(),
@@ -505,7 +485,6 @@ func (s *MessageService) buildMappingResponse(entry mappingEntry) *models.Mappin
 	return &models.MappingResponse{
 		Number:     entry.Number,
 		MatrixID:   entry.MatrixID,
-		RoomID:     string(entry.RoomID),
 		UserName:   entry.UserName,
 		SubNumbers: entry.SubNumbers,
 		UpdatedAt:  entry.UpdatedAt.UTC().Format(time.RFC3339),
@@ -517,7 +496,7 @@ func normalizeMatrixID(value string) string {
 }
 
 func normalizeMappingKey(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	return strings.TrimSpace(value)
 }
 
 func isSentBy(sender, username string) bool {

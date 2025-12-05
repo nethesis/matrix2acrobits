@@ -103,15 +103,15 @@ func (h handler) postMapping(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
 	}
 
-	logger.Debug().Str("endpoint", "post_mapping").Str("number", req.Number).Str("room_id", req.RoomID).Msg("saving mapping")
+	logger.Debug().Str("endpoint", "post_mapping").Int("number", req.Number).Msg("saving mapping")
 
 	resp, err := h.svc.SaveMapping(&req)
 	if err != nil {
-		logger.Error().Str("endpoint", "post_mapping").Str("number", req.Number).Err(err).Msg("failed to save mapping")
+		logger.Error().Str("endpoint", "post_mapping").Int("number", req.Number).Err(err).Msg("failed to save mapping")
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	logger.Info().Str("endpoint", "post_mapping").Str("number", req.Number).Str("room_id", req.RoomID).Msg("mapping saved successfully")
+	logger.Info().Str("endpoint", "post_mapping").Int("number", req.Number).Msg("mapping saved successfully")
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -145,7 +145,7 @@ func (h handler) getMapping(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	logger.Info().Str("endpoint", "get_mapping").Str("number", number).Str("room_id", resp.RoomID).Msg("mapping found")
+	logger.Info().Str("endpoint", "get_mapping").Str("number", number).Msg("mapping found")
 	return c.JSON(http.StatusOK, resp)
 }
 

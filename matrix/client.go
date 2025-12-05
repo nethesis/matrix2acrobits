@@ -168,10 +168,14 @@ func (mc *MatrixClient) CreateDirectRoom(ctx context.Context, userID id.UserID, 
 
 	mc.cli.UserID = userID
 	req := &mautrix.ReqCreateRoom{
-		Invite:        []id.UserID{targetUserID},
-		Preset:        "trusted_private_chat",
-		IsDirect:      true,
-		RoomAliasName: aliasKey,
+		Invite:   []id.UserID{targetUserID},
+		Preset:   "trusted_private_chat",
+		IsDirect: true,
+	}
+	// Set RoomAliasName if aliasKey is provided, allowing rooms to be looked up by alias
+	// and reused for private conversations between the same users.
+	if aliasKey != "" {
+		req.RoomAliasName = aliasKey
 	}
 	resp, err := mc.cli.CreateRoom(ctx, req)
 	if err != nil {

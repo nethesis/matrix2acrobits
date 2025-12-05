@@ -1,16 +1,14 @@
 [
   {
-    "number": "201",
+    "number": 201,
     "matrix_id": "@giacomo:synapse.gs.nethserver.net",
-    "room_id": "!giacomo-room:synapse.gs.nethserver.net",
     "user_name": "Giacomo Rossi",
-    "sub_numbers": ["3344", "91201"]
+    "sub_numbers": [3344, 91201]
   },
   {
-    "number": "202",
+    "number": 202,
     "matrix_id": "@mario:synapse.gs.nethserver.net",
-    "room_id": "!mario-room:synapse.gs.nethserver.net",
     "user_name": "Mario Bianchi",
-    "sub_numbers": ["3345", "91202"]
+    "sub_numbers": [3345, 91202]
   }
 ]

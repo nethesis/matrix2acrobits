@@ -161,14 +161,12 @@ func TestListMappings(t *testing.T) {
 
 	// Seed two mappings
 	svc.setMapping(mappingEntry{
-		Number:   "+111",
+		Number:   111,
 		MatrixID: "@alice:example.com",
-		RoomID:   "!room1:example.com",
 	})
 	svc.setMapping(mappingEntry{
-		Number:   "+222",
+		Number:   222,
 		MatrixID: "@bob:example.com",
-		RoomID:   "!room2:example.com",
 	})
 
 	list, err := svc.ListMappings()
@@ -177,23 +175,21 @@ func TestListMappings(t *testing.T) {
 	assert.Len(t, list, 2)
 
 	// Build a map for easy assertions
-	m := make(map[string]*models.MappingResponse)
+	m := make(map[int]*models.MappingResponse)
 	for _, it := range list {
 		m[it.Number] = it
 	}
 
-	if v, ok := m["+111"]; ok {
+	if v, ok := m[111]; ok {
 		assert.Equal(t, "@alice:example.com", v.MatrixID)
-		assert.Equal(t, "!room1:example.com", v.RoomID)
 	} else {
-		t.Fatalf("missing mapping for +111")
+		t.Fatalf("missing mapping for 111")
 	}
 
-	if v, ok := m["+222"]; ok {
+	if v, ok := m[222]; ok {
 		assert.Equal(t, "@bob:example.com", v.MatrixID)
-		assert.Equal(t, "!room2:example.com", v.RoomID)
 	} else {
-		t.Fatalf("missing mapping for +222")
+		t.Fatalf("missing mapping for 222")
 	}
 }
 
@@ -234,16 +230,6 @@ func TestIsPhoneNumber(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "Room ID",
-			input:    "!room123:example.com",
-			expected: false,
-		},
-		{
-			name:     "Room alias",
-			input:    "#alias:example.com",
-			expected: false,
-		},
-		{
 			name:     "Empty string",
 			input:    "",
 			expected: false,
@@ -274,17 +260,17 @@ func TestLoadMappingsFromFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer os.Remove(tmpFile.Name())
 
-	// Write test data in array format
+	// Write test data in array format with integer numbers and sub_numbers
 	testData := `[
   {
-    "number": "91201",
+    "number": 201,
     "matrix_id": "@giacomo:example.com",
-    "room_id": "!room1:example.com"
+    "sub_numbers": [91201]
   },
   {
-    "number": "91202",
+    "number": 202,
     "matrix_id": "@mario:example.com",
-    "room_id": "!room2:example.com"
+    "sub_numbers": [91202]
   }
 ]`
 	_, err = tmpFile.WriteString(testData)
@@ -303,16 +289,23 @@ func TestLoadMappingsFromFile(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, mappings, 2)
 
-	// Check specific mappings
+	// Check specific mappings - by sub_number
 	mapping1, err := svc.LookupMapping("91201")
 	assert.NoError(t, err)
 	assert.Equal(t, "@giacomo:example.com", mapping1.MatrixID)
-	assert.Equal(t, "!room1:example.com", mapping1.RoomID)
 
 	mapping2, err := svc.LookupMapping("91202")
 	assert.NoError(t, err)
 	assert.Equal(t, "@mario:example.com", mapping2.MatrixID)
-	assert.Equal(t, "!room2:example.com", mapping2.RoomID)
+
+	// Check specific mappings - by main number
+	mapping3, err := svc.LookupMapping("201")
+	assert.NoError(t, err)
+	assert.Equal(t, "@giacomo:example.com", mapping3.MatrixID)
+
+	mapping4, err := svc.LookupMapping("202")
+	assert.NoError(t, err)
+	assert.Equal(t, "@mario:example.com", mapping4.MatrixID)
 }
 
 func TestLoadMappingsFromFile_LegacyFormat(t *testing.T) {
@@ -370,11 +363,10 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 	t.Run("resolve sub_number to matrix_id", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:     "201",
+			Number:     201,
 			MatrixID:   "@giacomo:example.com",
-			RoomID:     "!room1:example.com",
 			UserName:   "Giacomo Rossi",
-			SubNumbers: []string{"3344", "91201"},
+			SubNumbers: []int{3344, 91201},
 		})
 
 		// Resolve using a sub_number
@@ -386,9 +378,8 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 	t.Run("resolve main number to matrix_id", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:   "202",
+			Number:   202,
 			MatrixID: "@mario:example.com",
-			RoomID:   "!room2:example.com",
 			UserName: "Mario Bianchi",
 		})
 
@@ -401,11 +392,10 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 	t.Run("resolve another sub_number", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:     "201",
+			Number:     201,
 			MatrixID:   "@giacomo:example.com",
-			RoomID:     "!room1:example.com",
 			UserName:   "Giacomo Rossi",
-			SubNumbers: []string{"3344", "91201"},
+			SubNumbers: []int{3344, 91201},
 		})
 
 		// Resolve using a different sub_number
@@ -431,11 +421,10 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 	t.Run("case insensitive sub_number resolution", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:     "201",
+			Number:     201,
 			MatrixID:   "@giacomo:example.com",
-			RoomID:     "!room1:example.com",
 			UserName:   "Giacomo Rossi",
-			SubNumbers: []string{"3344", "91201"},
+			SubNumbers: []int{3344, 91201},
 		})
 
 		// Resolve with different case (though phone numbers are typically numeric)
@@ -450,11 +439,10 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	t.Run("resolve via sub_number match", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:     "201",
+			Number:     201,
 			MatrixID:   "@giacomo:example.com",
-			RoomID:     "!room1:example.com",
 			UserName:   "Giacomo Rossi",
-			SubNumbers: []string{"3344", "91201"},
+			SubNumbers: []int{3344, 91201},
 		})
 
 		// Resolve using a sub_number - should return the main number
@@ -467,9 +455,8 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	t.Run("resolve via main number", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:   "202",
+			Number:   202,
 			MatrixID: "@mario:example.com",
-			RoomID:   "!room2:example.com",
 			UserName: "Mario Bianchi",
 		})
 
@@ -483,11 +470,10 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	t.Run("sub_numbers never returned directly", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:     "201",
+			Number:     201,
 			MatrixID:   "@giacomo:example.com",
-			RoomID:     "!room1:example.com",
 			UserName:   "Giacomo Rossi",
-			SubNumbers: []string{"3344", "91201"},
+			SubNumbers: []int{3344, 91201},
 		})
 
 		// Try to resolve using the main number
@@ -502,11 +488,10 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	t.Run("case insensitivity", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
 		svc.SaveMapping(&models.MappingRequest{
-			Number:     "201",
+			Number:     201,
 			MatrixID:   "@giacomo:example.com",
-			RoomID:     "!room1:example.com",
 			UserName:   "Giacomo Rossi",
-			SubNumbers: []string{"3344", "91201"},
+			SubNumbers: []int{3344, 91201},
 		})
 
 		// Try with uppercase
@@ -518,21 +503,19 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	// If matrix_id doesn't match main number but UserName is set, return UserName
 	t.Run("fallback to user name", func(t *testing.T) {
 		svc := NewMessageService(nil, nil)
-		// Create a mapping with matrix_id and username but no number
+		// Create a mapping with matrix_id, number, and username
 		entry := mappingEntry{
-			Number:     "internal|key",
+			Number:     999,
 			MatrixID:   "@test:example.com",
 			UserName:   "Test User",
-			SubNumbers: []string{},
+			SubNumbers: []int{},
 			UpdatedAt:  svc.now(),
 		}
 		svc.setMapping(entry)
 
-		// The matrix_id should match and we should get the number since it's available
-		// So this test actually verifies that internal mappings are skipped
+		// The matrix_id should match and we should get the number (not the username, since number is preferred)
 		result := svc.resolveMatrixIDToIdentifier("@test:example.com")
-		// Internal mappings (with |) should be skipped, so no match expected
-		assert.Equal(t, "@test:example.com", result, "internal mappings should be skipped")
+		assert.Equal(t, "999", result, "should return number when available, preferring it over username")
 	})
 
 	// Test case 6: No mapping found, return original matrix_id

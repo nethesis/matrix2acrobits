@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -274,12 +275,17 @@ func generateMappingVariants(s string) []string {
 }
 
 // ensureMappingVariants tries a set of mapping key variants and returns the variant that succeeded.
-func ensureMappingVariants(t *testing.T, baseURL, adminToken, number, matrixID, roomID string) (string, error) {
+func ensureMappingVariants(t *testing.T, baseURL, adminToken, number, matrixID string) (string, error) {
 	t.Helper()
 	variants := generateMappingVariants(number)
 	var lastErr error
 	for _, v := range variants {
-		mappingReq := models.MappingRequest{Number: v, MatrixID: matrixID, RoomID: roomID}
+		num, err := strconv.Atoi(v)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		mappingReq := models.MappingRequest{Number: num, MatrixID: matrixID}
 		headers := map[string]string{"X-Super-Admin-Token": adminToken}
 		resp, body, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
 		if err != nil {
@@ -295,12 +301,15 @@ func ensureMappingVariants(t *testing.T, baseURL, adminToken, number, matrixID, 
 }
 
 // ensureMapping posts a mapping to the internal mapping API and fails the test on unexpected errors.
-func ensureMapping(t *testing.T, baseURL, adminToken, number, matrixID, roomID string) {
+func ensureMapping(t *testing.T, baseURL, adminToken, number, matrixID string) {
 	t.Helper()
+	num, err := strconv.Atoi(strings.TrimPrefix(number, "+"))
+	if err != nil {
+		t.Fatalf("invalid number format: %v", err)
+	}
 	mappingReq := models.MappingRequest{
-		Number:   number,
+		Number:   num,
 		MatrixID: matrixID,
-		RoomID:   roomID,
 	}
 	headers := map[string]string{"X-Super-Admin-Token": adminToken}
 	resp, body, err := doRequest("POST", baseURL+"/api/internal/map_number_to_matrix", mappingReq, headers)
@@ -437,9 +446,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		mappingReq := models.MappingRequest{
-			Number:   "+9998887777",
+			Number:   9998887777,
 			MatrixID: fmt.Sprintf("@testuser:%s", serverName),
-			RoomID:   fmt.Sprintf("!testroom:%s", serverName),
 		}
 
 		// Create mapping
@@ -450,8 +458,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Logf("create mapping returned non-200 status; got %d: %s", resp.StatusCode, string(body))
 			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
-					t.Logf("created mapping variant %s for number %s", v, mappingReq.Number)
+				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, fmt.Sprintf("%d", mappingReq.Number), mappingReq.MatrixID); err == nil {
+					t.Logf("created mapping variant %s for number %d", v, mappingReq.Number)
 				} else {
 					t.Skip("mapping creation failed in this environment; mapping attempts exhausted; skipping assertion")
 				}
@@ -469,8 +477,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Logf("get mapping returned non-200 status; got %d: %s", resp.StatusCode, string(body))
 			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
-					t.Logf("created mapping variant %s for number %s", v, mappingReq.Number)
+				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, fmt.Sprintf("%d", mappingReq.Number), mappingReq.MatrixID); err == nil {
+					t.Logf("created mapping variant %s for number %d", v, mappingReq.Number)
 					// retry GET
 					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B9998887777", nil, headers)
 					if err != nil {
@@ -489,8 +497,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		if err := json.Unmarshal(body, &mappingResp); err != nil {
 			t.Fatalf("failed to parse response: %v", err)
 		}
-		if mappingResp.Number != "+9998887777" {
-			t.Errorf("expected number=+9998887777, got %s", mappingResp.Number)
+		if mappingResp.Number != 9998887777 {
+			t.Errorf("expected number=9998887777, got %d", mappingResp.Number)
 		}
 	})
 
@@ -500,9 +508,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 
 		mappingReq := models.MappingRequest{
-			Number:   "+1234509876",
+			Number:   1234509876,
 			MatrixID: fmt.Sprintf("@userwithname:%s", serverName),
-			RoomID:   fmt.Sprintf("!roomwithname:%s", serverName),
 			UserName: "Mario Rossi",
 		}
 
@@ -514,8 +521,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			// Try variants if creation failed due to environment
 			if resp.StatusCode == http.StatusBadRequest {
-				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
-					t.Logf("created mapping variant %s for number %s", v, mappingReq.Number)
+				if v, err := ensureMappingVariants(t, baseURL, cfg.adminToken, fmt.Sprintf("%d", mappingReq.Number), mappingReq.MatrixID); err == nil {
+					t.Logf("created mapping variant %s for number %d", v, mappingReq.Number)
 				} else {
 					t.Skip("mapping creation failed in this environment; skipping assertion")
 				}
@@ -532,7 +539,7 @@ func TestIntegration_MappingAPI(t *testing.T) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			if resp.StatusCode == http.StatusBadRequest {
-				if _, err := ensureMappingVariants(t, baseURL, cfg.adminToken, mappingReq.Number, mappingReq.MatrixID, mappingReq.RoomID); err == nil {
+				if _, err := ensureMappingVariants(t, baseURL, cfg.adminToken, fmt.Sprintf("%d", mappingReq.Number), mappingReq.MatrixID); err == nil {
 					// retry GET
 					resp, body, err = doRequest("GET", baseURL+"/api/internal/map_number_to_matrix?number=%2B1234509876", nil, headers)
 					if err != nil {
@@ -558,9 +565,8 @@ func TestIntegration_MappingAPI(t *testing.T) {
 
 	t.Run("UnauthorizedAccess", func(t *testing.T) {
 		mappingReq := models.MappingRequest{
-			Number:   "+1111111111",
+			Number:   1111111111,
 			MatrixID: "@test:example.com",
-			RoomID:   "!test:example.com",
 		}
 
 		// No token
@@ -593,7 +599,7 @@ func attemptMappingsAndRetrySend(t *testing.T, baseURL, adminToken string, origS
 	// First attempt: try common variants for the From field (phone numbers)
 	fromVariants := generateMappingVariants(origSendReq.From)
 	for _, fv := range fromVariants {
-		_, err := ensureMappingVariants(t, baseURL, adminToken, fv, origSendReq.From, origSendReq.To)
+		_, err := ensureMappingVariants(t, baseURL, adminToken, fv, origSendReq.From)
 		if err == nil {
 			// Retry send with the same original request (server will resolve mapping)
 			resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", origSendReq, nil)
@@ -610,7 +616,7 @@ func attemptMappingsAndRetrySend(t *testing.T, baseURL, adminToken string, origS
 	// (covers earlier cases where the identifier might be localpart-only)
 	if !strings.HasPrefix(origSendReq.To, "@") {
 		candidate := fmt.Sprintf("@%s:%s", getLocalpart(origSendReq.To), strings.Split(strings.TrimPrefix(origSendReq.To, "@"), ":")[0])
-		_, err := ensureMappingVariants(t, baseURL, adminToken, origSendReq.To, candidate, origSendReq.To)
+		_, err := ensureMappingVariants(t, baseURL, adminToken, origSendReq.To, candidate)
 		if err == nil {
 			resp, body, err := doRequest("POST", baseURL+"/api/client/send_message", origSendReq, nil)
 			return resp, body, err
@@ -652,7 +658,7 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 		}
 
 		// Create a direct room between user1 and user2 using CreateDirectRoom
-		aliasKey := fmt.Sprintf("phone_test_%d", time.Now().Unix())
+		aliasKey := fmt.Sprintf("%s|%s", user1Localpart, user2Localpart)
 		createResp, err := matrixClient.CreateDirectRoom(context.Background(), id.UserID(user1MatrixID), id.UserID(user2MatrixID), aliasKey)
 		if err != nil {
 			t.Fatalf("failed to create direct room: %v", err)
@@ -670,7 +676,7 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 
 		// Step 3: Ensure a mapping from user1's phone number to user1's Matrix ID exists
 		phoneNumber := cfg.user1Number
-		ensureMapping(t, baseURL, cfg.adminToken, phoneNumber, user1MatrixID, string(roomID))
+		ensureMapping(t, baseURL, cfg.adminToken, phoneNumber, user1MatrixID)
 		t.Logf("Ensured mapping: %s → %s", phoneNumber, user1MatrixID)
 
 		// Step 4: Send a message using the phone number as the 'from' field
