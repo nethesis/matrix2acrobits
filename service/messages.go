@@ -349,9 +349,9 @@ func (s *MessageService) ensureDirectRoom(ctx context.Context, actingUserID, tar
 
 	// Search between existing rooms
 	logger.Debug().Str("key", key).Msg("Searching for direct room with alias")
-	alias, aliasErr := s.matrixClient.ResolveRoomAlias(ctx, key)
-	if aliasErr == nil && alias.RoomID != "" {
-		return alias.RoomID, nil
+	roomID := s.matrixClient.ResolveRoomAlias(ctx, key)
+	if roomID != "" {
+		return id.RoomID(roomID), nil
 	}
 
 	// Create a new direct room with the alias

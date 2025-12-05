@@ -60,7 +60,9 @@ func NewClient(cfg Config) (*MatrixClient, error) {
 	// This flag enables the `user_id` query parameter for impersonation.
 	client.SetAppServiceUserID = true
 
-	// Extract homeserver name from URL (e.g., https://synapse.example.com -> synapse.example.com)
+	// Extract homeserver name from URL:
+	// eg: https://synapse.example.com -> synapse.example.com)
+	// eg: http://localhost:8008/ -> localhost
 	homeserverName := strings.TrimPrefix(cfg.HomeserverURL, "https://")
 	homeserverName = strings.TrimPrefix(homeserverName, "http://")
 	homeserverName = strings.TrimSuffix(homeserverName, "/")
@@ -68,6 +70,7 @@ func NewClient(cfg Config) (*MatrixClient, error) {
 	if idx := strings.Index(homeserverName, "/"); idx > 0 {
 		homeserverName = homeserverName[:idx]
 	}
+	homeserverName = strings.SplitN(homeserverName, ":", 2)[0] // Remove port if present
 
 	return &MatrixClient{
 		cli:            client,
@@ -216,9 +219,22 @@ func (mc *MatrixClient) JoinRoom(ctx context.Context, userID id.UserID, roomID i
 }
 
 // ResolveRoomAlias resolves a room alias to a room ID.
-func (mc *MatrixClient) ResolveRoomAlias(ctx context.Context, roomAlias string) (*mautrix.RespAliasResolve, error) {
+func (mc *MatrixClient) ResolveRoomAlias(ctx context.Context, roomAlias string) string {
+	roomAlias = strings.TrimSpace(roomAlias)
+	if roomAlias == "" {
+		logger.Debug().Msg("matrix: empty room alias")
+		return ""
+	}
+	if !strings.HasPrefix(roomAlias, "#") {
+		roomAlias = "#" + roomAlias + ":" + mc.homeserverName
+	}
 	// This action does not require impersonation, so no lock is needed.
-	return mc.cli.ResolveAlias(ctx, id.RoomAlias(roomAlias))
+	resp, err := mc.cli.ResolveAlias(ctx, id.RoomAlias(roomAlias))
+	if err != nil {
+		logger.Debug().Str("room_alias", roomAlias).Err(err).Msg("matrix: failed to resolve room alias")
+		return ""
+	}
+	return string(resp.RoomID)
 }
 
 func (mc *MatrixClient) GetRoomAliases(ctx context.Context, roomID id.RoomID) []string {

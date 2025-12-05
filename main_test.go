@@ -583,15 +583,18 @@ func TestIntegration_SendMessageWithPhoneNumberMapping(t *testing.T) {
 
 		// Create a direct room between user1 and user2 using CreateDirectRoom
 		aliasKey := fmt.Sprintf("%s_bis|%s_bis", user1Localpart, user2Localpart)
-		createResp, err := matrixClient.CreateDirectRoom(context.Background(), id.UserID(user1MatrixID), id.UserID(user2MatrixID), aliasKey)
-		if err != nil {
-			t.Fatalf("failed to create direct room: %v", err)
+		roomID := matrixClient.ResolveRoomAlias(context.Background(), aliasKey)
+		if roomID == "" {
+			createResp, err := matrixClient.CreateDirectRoom(context.Background(), id.UserID(user1MatrixID), id.UserID(user2MatrixID), aliasKey)
+			if err != nil {
+				t.Fatalf("failed to create direct room: %v", err)
+			}
+			roomID = string(createResp.RoomID)
+			t.Logf("Created direct room %s", roomID)
 		}
-		roomID := createResp.RoomID
-		t.Logf("Created direct room %s", roomID)
 
 		// Step 2: Join the room as user2
-		_, err = matrixClient.JoinRoom(context.Background(), id.UserID(user2MatrixID), roomID)
+		_, err = matrixClient.JoinRoom(context.Background(), id.UserID(user2MatrixID), id.RoomID(roomID))
 		if err != nil {
 			t.Fatalf("failed for user2 to join room: %v", err)
 		}
