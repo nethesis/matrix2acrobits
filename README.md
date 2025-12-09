@@ -22,6 +22,12 @@ The proxy is configured via environment variables. Minimal required env:
 - `PUSH_TOKEN_DB_PATH` (optional): path to a database file for storing push tokens
 - `CACHE_TTL_SECONDS` (optional): time-to-live for in-memory cache entries (default: `3600` seconds)
 
+Authentication (Dex)
+
+- `DEX_TOKEN_ENDPOINT` (optional): full Dex token endpoint URL (e.g. `https://your.homeserver/dex/token`). If not set the proxy will default to `MATRIX_HOMESERVER_URL + "/dex/token"`.
+- `DEX_CLIENT_ID` (required to enable Acrobits username/password authentication): OAuth2 client id that the proxy will use to request tokens from Dex (e.g. `synapse`).
+- `DEX_CLIENT_SECRET` (optional): client secret for confidential Dex clients. If provided the proxy will send it using `client_secret_post` during the token exchange.
+
 Building and running
 
 ```bash
@@ -86,6 +92,6 @@ Implemented APIs:
 
 The following features are not yet implemented:
 
-- sendMessage: implement password validation on send messages, currently the password is ignored
+-- sendMessage: password validation implemented — requests to `send_message` and `fetch_messages` are authenticated against Dex using the configured `DEX_CLIENT_ID`/`DEX_CLIENT_SECRET` and the token endpoint.
 - when a private room is deleted, there is no way to send messages to the user
 - implement https://doc.acrobits.net/api/client/account_removal_reporter.html#account-removal-reporter-webservice

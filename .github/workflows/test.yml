@@ -26,6 +26,10 @@ jobs:
         run: |
           chmod +x test/test.sh
 
+      - name: Run unit tests
+        run: |
+          go test -v ./...
+
       - name: Run integration test harness
         env:
           RUN_INTEGRATION_TESTS: 1

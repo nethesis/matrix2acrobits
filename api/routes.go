@@ -45,6 +45,15 @@ func (h handler) sendMessage(c echo.Context) error {
 		logger.Warn().Str("endpoint", "send_message").Err(err).Msg("invalid request payload")
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
 	}
+	// Authenticate user with Dex using provided username/password
+	if req.From == "" || req.Password == "" {
+		logger.Warn().Str("endpoint", "send_message").Msg("missing credentials in send_message request")
+		return echo.NewHTTPError(http.StatusUnauthorized, "missing credentials")
+	}
+	if _, err := service.AuthenticateWithDex(c.Request().Context(), req.From, req.Password); err != nil {
+		logger.Warn().Str("endpoint", "send_message").Str("from", req.From).Err(err).Msg("authentication failed for send_message")
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication failed")
+	}
 
 	logger.Debug().Str("endpoint", "send_message").Str("from", req.From).Str("to", req.To).Msg("processing send message request")
 	logger.Debug().Str("endpoint", "send_message").Str("raw_from", req.From).Str("raw_to", req.To).Msg("raw identifiers for recipient resolution")
@@ -66,6 +75,15 @@ func (h handler) fetchMessages(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		logger.Warn().Str("endpoint", "fetch_messages").Err(err).Msg("invalid request payload")
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
+	}
+	// Authenticate user with Dex using provided username/password
+	if req.Username == "" || req.Password == "" {
+		logger.Warn().Str("endpoint", "fetch_messages").Msg("missing credentials in fetch_messages request")
+		return echo.NewHTTPError(http.StatusUnauthorized, "missing credentials")
+	}
+	if _, err := service.AuthenticateWithDex(c.Request().Context(), req.Username, req.Password); err != nil {
+		logger.Warn().Str("endpoint", "fetch_messages").Str("username", req.Username).Err(err).Msg("authentication failed for fetch_messages")
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication failed")
 	}
 
 	logger.Debug().Str("endpoint", "fetch_messages").Str("username", req.Username).Str("last_id", req.LastID).Msg("processing fetch messages request")
