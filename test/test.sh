@@ -28,6 +28,11 @@ stop() {
   else
     echo "matrix-synapse not present"
   fi
+
+  if [ -n "${MOCK_AUTH_PID:-}" ]; then
+    kill "$MOCK_AUTH_PID" 2>/dev/null || true
+    echo "Mock auth server stopped"
+  fi
 }
 
 start() {
@@ -62,6 +67,15 @@ start() {
     fi
     sleep 5
   done
+
+  echo "Starting mock auth server..."
+  pushd "$SCRIPT_DIR"
+  go run mock_auth.go &
+  MOCK_AUTH_PID=$!
+  popd
+  echo "Mock auth server started with PID $MOCK_AUTH_PID"
+  # Wait for mock auth
+  sleep 2
 
   # Source test environment variables
   if [ -f "$SCRIPT_DIR/test.env" ]; then
@@ -206,6 +220,7 @@ run() {
     echo "podman not found in PATH; please start Synapse manually if you want integration tests to run against a local server"
   fi
 
+  export EXT_AUTH_URL=http://localhost:18081
   export RUN_INTEGRATION_TESTS=1
   echo "Running integration tests (RUN_INTEGRATION_TESTS=1)"
   # Run all tests with coverage first

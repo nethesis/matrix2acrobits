@@ -40,14 +40,6 @@ app_service_config_files:
 
 Finally, **restart your Synapse server** to load the new configuration.
 
-### 3. dex_config.yaml
-
-Add this do the end of the config file:
-```yaml
-oauth2:
-  skipApprovalScreen: true
-  passwordConnector: ldap
-```
 
 ## Manual setup on an existing NS8 installation
 
@@ -63,14 +55,9 @@ runagent -m matrix1
 
 Download the container image:
 ```
-podman pull ghcr.io/nethesis/matrix2acrobits
+podman pull ghcr.io/nethesis/matrix2acrobits:latest
 ```
 
-Setup dex to use ldap password connector:
-```
-echo >> ../templates/dex-config.yaml
-echo '  passwordConnector: ldap' >> ../templates/dex-config.yaml
-```
 
 Setup synapse application service:
 ```
@@ -99,30 +86,7 @@ echo "   - /data/config/acrobits-proxy.yaml" >> ../templates/synapse-homeserver.
 Restart the services:
 ```
 systemctl --user restart synapse
-systemctl --user restart dex
 ```
-
-Run the container:
-```
-podman run --rm --replace --name matrix2acrobits --network host -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net -e SUPER_ADMIN_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net -e PUSH_TOKEN_DB_PATH=/tmp/test.db -e PROXY_URL=https://synapse.gs.nethserver.net ghcr.io/nethesis/matrix2acrobits
-```
-
-
-Then run the container with the mapping file mounted:
-```
-podman run --rm --replace --name matrix2acrobits --network host \
-  -v /etc/matrix2acrobits/mappings.json:/mappings.json:z \
-  -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net \
-  -e SUPER_ADMIN_TOKEN=secret \
-  -e PROXY_PORT=8080 \
-  -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net \
-  -e MAPPING_FILE=/mappings.json \
-  -e PUSH_TOKEN_DB_PATH=/tmp/test.db \
-  -e PROXY_URL=https://synapse.gs.nethserver.net \
-  ghcr.io/nethesis/matrix2acrobits
-```
-
-The container will log the loaded mappings at startup: `mappings loaded from file count=N file=/mappings.json`
 
 Configure traefik to route /m2a to the proxy:
 ```
@@ -134,87 +98,29 @@ Configure traefik to route /_matrix/push/v1/notify to the proxy:
 api-cli run set-route  --agent module/traefik1 --data '{"instance": "matrix1-push", "name":"synapse-push","host":"synapse.gs.nethserver.net","path":"/_matrix/push/v1/notify","url":"http://localhost:8080","lets_encrypt":true, "strip_prefix": false}'
 ```
 
-
-
 Now:
 - login to Element with the first user (giacomo)
 - login to Element with the second user (mario)
 
-After the above logins, you can send a message from giacomo to mario:
+After the above logins, you can send a message from giacomo (91201) to mario (202) using the proxy API:
 ```
 curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "@giacomo:synapse.gs.nethserver.net",
+    "from": "91201",
+    "password": "giacomo",
+    "to": "202",
+    "body": "Hello Mario — this is Giacomo (curl test)",
+    "content_type": "text/plain"
+  }'
+```
+
+Send message using Matrix ID as recipient - Giacomo to Mario:
+```
+curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
+    "from": "91201",
+    "password": "giacomo",
     "to": "@mario:synapse.gs.nethserver.net",
     "body": "Hello Mario — this is Giacomo (curl test)",
     "content_type": "text/plain"
   }'
 ```
 
-Response example:
-```
-{"message":"$VnrNZPmkkrgcqd2Lq15K9GKYuKXaNi-PrEsx6WLHfDs"}
-```
-
-Mario reply:
-```
-curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "@mario:synapse.gs.nethserver.net",
-    "to": "@giacomo:synapse.gs.nethserver.net",
-    "body": "Hello Giacomo — this is Mario reply (curl test)",
-    "content_type": "text/plain"
-  }'
-```
-
-
-Map  number (91201) to Matrix user (giacomo):
-```
-curl "http://127.0.0.1:8080/api/internal/map_number_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
-  "number": "91201",
-  "matrix_id": "@giacomo:synapse.gs.nethserver.net",
-  "room_id": "!giacomo-room:synapse.gs.nethserver.net"
-}'
-```
-
-Map  number (91202) to Matrix user (mario):
-```
-curl "http://127.0.0.1:8080/api/internal/map_number_to_matrix"   -H "Content-Type: application/json"   -H "X-Super-Admin-Token: secret"   -d '{
-  "number": "91202",
-  "matrix_id": "@mario:synapse.gs.nethserver.net",
-  "room_id": "!mario-room:synapse.gs.nethserver.net"
-}'
-```
-
-Retrieve current mappings:
-```
-curl "http://127.0.0.1:8080/api/internal/map_number_to_matrix" -H "X-Super-Admin-Token: secret"
-```
-
-Send message using mapped  number (91201) - Giacomo to Mario:
-```
-curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "@giacomo:synapse.gs.nethserver.net",
-    "to": "91202",
-    "body": "Hello Mario — this is Giacomo (curl test using mapped number)",
-    "content_type": "text/plain"
-  }'
-```
-
-Send message using mapped  number (91202) - Mario to Giacomo:
-```
-curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "@mario:synapse.gs.nethserver.net",
-    "to": "91201",
-    "body": "Hello Giacomo — this is Mario reply (curl test using mapped number)",
-    "content_type": "text/plain"
-  }'
-```
-
-Send message using mapped numbers - Giacomo to Mario:
-```
-curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "91201",
-    "to": "91202",
-    "body": "Hello Mario — this is Giacomo (curl test using both mapped numbers)",
-    "content_type": "text/plain"
-  }'
-```

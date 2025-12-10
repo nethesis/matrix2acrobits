@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -518,6 +521,7 @@ func TestReportPushToken(t *testing.T) {
 			Selector:  "",
 			TokenMsgs: "token123",
 			AppIDMsgs: "com.app",
+			Password:  "testpass",
 		}
 		resp, err := svc.ReportPushToken(context.TODO(), req)
 		assert.Error(t, err)
@@ -533,6 +537,7 @@ func TestReportPushToken(t *testing.T) {
 			Selector:  "12869E0E6E553673C54F29105A0647204C416A2A:7C3A0D14",
 			TokenMsgs: "token123",
 			AppIDMsgs: "com.app",
+			Password:  "testpass",
 		}
 		resp, err := svc.ReportPushToken(context.TODO(), req)
 		assert.Error(t, err)
@@ -542,18 +547,31 @@ func TestReportPushToken(t *testing.T) {
 
 	// Test with valid database but no proxy URL (should succeed without pusher registration)
 	t.Run("valid database without pusher registration", func(t *testing.T) {
+		// mock external auth endpoint
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`[{"main_extension":"201","sub_extensions":["91201"],"user_name":"alice"}]`))
+		}))
+		defer ts.Close()
+		os.Setenv("EXT_AUTH_URL", ts.URL)
+		defer os.Unsetenv("EXT_AUTH_URL")
+		os.Setenv("MATRIX_HOMESERVER_URL", "https://example.com")
+		defer os.Unsetenv("MATRIX_HOMESERVER_URL")
+
 		db, err := db.NewDatabase(":memory:")
 		require.NoError(t, err)
 		defer db.Close()
 
 		svc := NewMessageService(nil, db, "")
 		req := &models.PushTokenReportRequest{
-			UserName:   "@alice:example.com",
+			UserName:   "201",
 			Selector:   "@alice:example.com",
 			TokenMsgs:  "token123",
 			AppIDMsgs:  "com.acrobits.softphone",
 			TokenCalls: "token456",
 			AppIDCalls: "com.acrobits.softphone",
+			Password:   "testpass",
 		}
 		resp, err := svc.ReportPushToken(context.TODO(), req)
 		assert.NoError(t, err)
@@ -568,18 +586,31 @@ func TestReportPushToken(t *testing.T) {
 
 	// Test with both messages and calls tokens
 	t.Run("with both messages and calls tokens", func(t *testing.T) {
+		// mock external auth endpoint
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`[{"main_extension":"201","sub_extensions":["91201"],"user_name":"alice"}]`))
+		}))
+		defer ts.Close()
+		os.Setenv("EXT_AUTH_URL", ts.URL)
+		defer os.Unsetenv("EXT_AUTH_URL")
+		os.Setenv("MATRIX_HOMESERVER_URL", "https://example.com")
+		defer os.Unsetenv("MATRIX_HOMESERVER_URL")
+
 		db, err := db.NewDatabase(":memory:")
 		require.NoError(t, err)
 		defer db.Close()
 
 		svc := NewMessageService(nil, db, "")
 		req := &models.PushTokenReportRequest{
-			UserName:   "@alice:example.com",
+			UserName:   "201",
 			Selector:   "@alice:example.com",
 			TokenMsgs:  "token123",
 			AppIDMsgs:  "com.acrobits.softphone",
 			TokenCalls: "token456",
 			AppIDCalls: "com.acrobits.softphone",
+			Password:   "testpass",
 		}
 		resp, err := svc.ReportPushToken(context.TODO(), req)
 		assert.NoError(t, err)
@@ -592,4 +623,46 @@ func TestReportPushToken(t *testing.T) {
 		assert.Equal(t, "token123", savedToken.TokenMsgs)
 		assert.Equal(t, "token456", savedToken.TokenCalls)
 	})
+}
+
+// fakeAuthClient allows controlling responses for testing.
+type fakeAuthClient struct {
+	ok bool
+}
+
+func (f *fakeAuthClient) Validate(ctx context.Context, extension, secret, homeserverHost string) ([]*models.MappingRequest, bool, error) {
+	if f.ok {
+		return []*models.MappingRequest{
+			{Number: 1, MatrixID: "@alice:" + homeserverHost, SubNumbers: []int{}},
+		}, true, nil
+	}
+	return []*models.MappingRequest{}, false, fmt.Errorf("unauthorized")
+}
+
+func TestReportPushToken_Auth401DoesNotSave(t *testing.T) {
+	// set up in-memory DB
+	dbi, err := db.NewDatabase(":memory:")
+	require.NoError(t, err)
+	defer dbi.Close()
+
+	svc := NewMessageService(nil, dbi, "")
+	// inject fake auth client returning false (not authorized)
+	svc.authClient = &fakeAuthClient{ok: false}
+
+	req := &models.PushTokenReportRequest{
+		UserName:  "@alice:example.com",
+		Selector:  "@alice:example.com",
+		TokenMsgs: "token123",
+		AppIDMsgs: "com.acrobits.softphone",
+		Password:  "wrong",
+	}
+
+	resp, err := svc.ReportPushToken(context.TODO(), req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+
+	// Ensure no token saved
+	token, err := dbi.GetPushToken("@alice:example.com")
+	assert.NoError(t, err)
+	assert.Nil(t, token)
 }

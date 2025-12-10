@@ -12,57 +12,44 @@ The service authenticates to the Matrix homeserver as an **Application Service**
 
 The proxy is configured via environment variables. Minimal required env:
 
-- `MATRIX_HOMESERVER_URL`: URL of your Matrix homeserver (e.g. `https://matrix.example`)
+- `MATRIX_HOMESERVER_URL`: URL of your Matrix homeserver (e.g. `https://matrix.example`),
+  used also to derive the hostname when constructing Matrix IDs from external auth responses
 - `SUPER_ADMIN_TOKEN`: the Application Service `as_token` from your registration file
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
 - `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
-- `PROXY_URL` (optional): public-facing URL of this proxy (e.g. `https://matrix-proxy.example.com`) - **required for push notification support**
+- `PROXY_URL` (optional): public-facing URL of this proxy (e.g. `https://matrix.example.com`), if not specified, use the value of `MATRIX_HOMESERVER_URL`
+ - `EXT_AUTH_URL` (optional): external HTTP endpoint used to validate extension+password for push token reports (default: `https://voice.gs.nethserver.net/freepbx/testextauth`)
+ - `EXT_AUTH_TIMEOUT_S` (optional): timeout in seconds for calls to `EXT_AUTH_URL` (default: `5`)
 - `LOGLEVEL` (optional): logging verbosity level - `DEBUG`, `INFO`, `WARNING`, `CRITICAL` (default: `INFO`)
-- `MAPPING_FILE` (optional): path to a JSON file containing -to-Matrix mappings to load at startup
 - `PUSH_TOKEN_DB_PATH` (optional): path to a database file for storing push tokens
 - `CACHE_TTL_SECONDS` (optional): time-to-live for in-memory cache entries (default: `3600` seconds)
 
-Building and running
+### Start with Podman
 
+Run the following command to start the container using rootless Podman:
+```
+podman run --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debug  -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net -e SUPER_ADMIN_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net -e PROXY_URL=https://synapse.gs.nethserver.net/ -e EXT_AUTH_URL=https://voice.gs.nethserver.net/freepbx/rest/testextauth ghcr.io/nethesis/matrix2acrobits
+```
+
+On production set also:
+
+- `PUSH_TOKEN_DB_PATH` to a persistent it inside a volume
+- `LOGLEVEL` to `INFO` or `WARNING`
+
+## Building
+
+Build is automated via GitHub Actions and container images are published to GitHub Container Registry: `ghcr.io/nethesis/matrix2acrobits`.
+
+Build golang binary locally:
 ```bash
 # build (produces ./matrix2acrobits)
 go build -o matrix2acrobits .
-
-# run (example)
-export MATRIX_HOMESERVER_URL="https://matrix.your-homeserver-name.com"
-export SUPER_ADMIN_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
-export PROXY_PORT=8080
-export AS_USER_ID="@_acrobits_proxy:your-homeserver-name.com"
-export PROXY_URL="https://matrix-proxy.your-homeserver-name.com"  # For push notifications
-export LOGLEVEL=INFO
-./matrix2acrobits
 ```
 
-### Logging Levels
-
-The `LOGLEVEL` environment variable controls the verbosity of application logs:
-
-- **DEBUG**: Detailed information for diagnosing issues (shows all API calls, mapping lookups, Matrix operations)
-- **INFO**: General informational messages (successful operations, server startup) - **Default**
-- **WARNING**: Warning messages for potentially problematic situations
-- **CRITICAL**: Only critical errors
-
-For debugging mapping and API issues, set `LOGLEVEL=DEBUG` to see detailed trace information.
-
-### Loading Mappings from File
-
-You can pre-load -to-Matrix mappings at startup by providing a `MAPPING_FILE` environment variable pointing to a JSON file. This is useful for initializing the proxy with a set of known mappings.
-
-See `docs/example-mappings.json` for an example format.
-
-Usage:
-
+Build container image locally:
 ```bash
-export MAPPING_FILE="/path/to/mappings.json"
-./matrix2acrobits
+buildah build --layers -t ghcr.io/nethesis/matrix2acrobits:latest -f Containerfile .
 ```
-
-The loaded mappings will be logged at startup with the message: `mappings loaded from file count=N file=/path/to/mappings.json`
 
 ## Extra info
 
@@ -71,6 +58,7 @@ The loaded mappings will be logged at startup with the message: `mappings loaded
 - [Container Build & Usage](docs/CONTAINER.md)
 - [Direct messaging](docs/DIRECT_ROOMS-ALIASES.md)
 - [Push Notifications](docs/PUSH_NOTIFICATIONS.md)
+- [Authentication](docs/AUTHENTICATION.md)
 - [Testing](test/README.md)
 
 
@@ -82,10 +70,15 @@ Implemented APIs:
 - https://doc.acrobits.net/api/client/send_message.html
 - https://doc.acrobits.net/api/client/push_token_reporter.html
 
-## TODO
+## Limitations and Future Work
+
+Limitations:
+
+- when a private room is deleted, there is no way to send messages to the user
+- text-only messages are supported (no media, no rich content)
+- only one-to-one direct messaging is supported (no group chats)
 
 The following features are not yet implemented:
 
-- sendMessage: implement password validation on send messages, currently the password is ignored
-- when a private room is deleted, there is no way to send messages to the user
-- implement https://doc.acrobits.net/api/client/account_removal_reporter.html#account-removal-reporter-webservice
+- Account removal: https://doc.acrobits.net/api/client/account_removal_reporter.html#account-removal-reporter-webservice
+- Messages with media content

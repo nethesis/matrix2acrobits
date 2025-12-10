@@ -101,9 +101,13 @@ export LOGLEVEL=INFO  # DEBUG, INFO, WARNING, or CRITICAL
 
 ### Unit Tests
 
-- Test `internal/service` logic using mocks for the Matrix client.
+- Test logic using mocks for the Matrix client.
 - Verify correct JSON marshalling/unmarshalling of Acrobits payloads.
 - Verify mapping logic (e.g., Matrix timestamp → Acrobits RFC3339).
+- Execute unit tests:
+  ```
+  go test -v ./...
+  ```
 
 ### Integration Tests
 

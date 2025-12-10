@@ -22,13 +22,14 @@ paths:
               type: object
               required:
                 - username
+                - password
               properties:
                 username:
                   type: string
                   description: The full Matrix ID (e.g., @user:server.com) of the user to impersonate.
                 password:
                   type: string
-                  description: This field is ignored. Kept for client compatibility.
+                  description: Password used to authenticate the extension/user via the external auth service.
                 last_id:
                   type: string
                   description: The 'since' token from the last sync.
@@ -73,13 +74,14 @@ paths:
                 - from
                 - to
                 - body
+                - password
               properties:
                 from:
                   type: string
                   description: The sender - either a full Matrix ID (e.g., @user:server.com) or a phone number (e.g., +1234567890).
                 password:
                   type: string
-                  description: This field is ignored. Kept for client compatibility.
+                  description: Password used to authenticate the sender via the external auth service.
                 to:
                   type: string
                   description: Recipient Matrix ID, Alias, or mapped phone number.
@@ -144,69 +146,7 @@ paths:
         response:
           {}
 
-  /api/internal/map_number_to_matrix:
-    post:
-      summary: Register or update an -to-Matrix mapping
-      description: |
-        Creates or overwrites the mapping between an  number (or other identifier) and
-        a Matrix room. Requires the `X-Super-Admin-Token` header.
-      parameters:
-        - in: header
-          name: X-Super-Admin-Token
-          schema:
-            type: string
-          required: true
-          description: The Application Service token (as_token).
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MappingRequest'
-      responses:
-        '200':
-          description: Mapping acknowledged
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MappingResponse'
-        '400':
-          description: Invalid request payload.
-        '401':
-          description: Invalid admin token.
-    get:
-      summary: Lookup an existing mapping
-      description: |
-        Returns the stored Matrix handler for a previously mapped identifier. Requires the
-        `X-Super-Admin-Token` header.
-      parameters:
-        - in: header
-          name: X-Super-Admin-Token
-          schema:
-            type: string
-          required: true
-          description: The Application Service token (as_token).
-        - in: query
-          name: number
-          schema:
-            type: string
-          required: false
-          description: The  number or identifier previously mapped. If omitted, the endpoint returns the full list of mappings.
-      responses:
-        '200':
-          description: Mapping found
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: '#/components/schemas/MappingResponse'
-                  - type: array
-                    items:
-                      $ref: '#/components/schemas/MappingResponse'
-        '401':
-          description: Invalid admin token.
-        '404':
-          description: No mapping exists for the requested identifier.
+
 
   /api/internal/push_tokens:
     get:
@@ -370,98 +310,71 @@ components:
           items:
             $ref: '#/components/schemas/SMS'
           description: Array of sent messages. Sorted by sending_date in ascending order (oldest first).
-    MappingRequest:
-      type: object
-      required:
-        - number
-        - room_id
-      properties:
-        number:
-          type: string
-          description: Phone number or bridged identifier to map.
-        matrix_id:
-          type: string
-          description: Optional Matrix user to use when auto-creating DMs.
-        room_id:
-          type: string
-          description: Matrix room ID where the mapped identifier should route messages.
-        user_name:
-          type: string
-          description: Optional human-friendly name to expose for this mapping (e.g., contact name).
-    MappingResponse:
+    MatrixPushNotifyRequest:
       type: object
       properties:
-        number:
-          type: string
-        matrix_id:
+        notification:
+          $ref: '#/components/schemas/MatrixNotification'
+    MatrixNotification:
+      type: object
+      properties:
+        event_id:
           type: string
         room_id:
           type: string
-        user_name:
+        type:
           type: string
-          description: Optional human-friendly name associated with the mapping.
-        updated_at:
+        sender:
           type: string
-          format: date-time
-          description: When the mapping was last written.
-        MatrixPushNotifyRequest:
+        sender_display_name:
+          type: string
+        content:
           type: object
-          properties:
-            notification:
-              $ref: '#/components/schemas/MatrixNotification'
-        MatrixNotification:
+          additionalProperties: true
+        counts:
+          $ref: '#/components/schemas/MatrixCounts'
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatrixDevice'
+    MatrixCounts:
+      type: object
+      properties:
+        unread:
+          type: integer
+        missed_calls:
+          type: integer
+    MatrixDevice:
+      type: object
+      properties:
+        app_id:
+          type: string
+        pushkey:
+          type: string
+        pushkey_ts:
+          type: integer
+        tweaks:
           type: object
-          properties:
-            event_id:
-              type: string
-            room_id:
-              type: string
-            type:
-              type: string
-            sender:
-              type: string
-            sender_display_name:
-              type: string
-            content:
-              type: object
-              additionalProperties: true
-            counts:
-              $ref: '#/components/schemas/MatrixCounts'
-            devices:
-              type: array
-              items:
-                $ref: '#/components/schemas/MatrixDevice'
-        MatrixCounts:
-          type: object
-          properties:
-            unread:
-              type: integer
-            missed_calls:
-              type: integer
-        MatrixDevice:
-          type: object
-          properties:
-            app_id:
-              type: string
-            pushkey:
-              type: string
-            pushkey_ts:
-              type: integer
-            tweaks:
-              type: object
-              additionalProperties: true
-        MatrixPushNotifyResponse:
-          type: object
-          properties:
-            rejected:
-              type: array
-              items:
-                type: string
+          additionalProperties: true
+    MatrixPushNotifyResponse:
+      type: object
+      properties:
+        rejected:
+          type: array
+          items:
+            type: string
     PushTokenReportRequest:
       type: object
       required:
         - selector
+        - password
       properties:
+        username:
+          type: string
+          description: The extension or selector username reporting the token.
+        password:
+          type: string
+          description: Password used to authenticate the extension via the external auth service.
         selector:
           type: string
           description: |

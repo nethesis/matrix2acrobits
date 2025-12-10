@@ -81,7 +81,8 @@ func main() {
 	// Get proxy URL for pusher registration
 	proxyURL := os.Getenv("PROXY_URL")
 	if proxyURL == "" {
-		logger.Warn().Msg("PROXY_URL not configured - pusher registration with Matrix will be skipped")
+		proxyURL = homeserver
+		logger.Info().Msg("PROXY_URL not configured, assuming same as MATRIX_HOMESERVER_URL")
 	} else {
 		logger.Info().Str("proxy_url", proxyURL).Msg("proxy URL configured for pusher registration")
 	}

@@ -21,8 +21,6 @@ func RegisterRoutes(e *echo.Echo, svc *service.MessageService, pushSvc *service.
 	e.POST("/api/client/send_message", h.sendMessage)
 	e.POST("/api/client/fetch_messages", h.fetchMessages)
 	e.POST("/api/client/push_token_report", h.pushTokenReport)
-	e.POST("/api/internal/map_number_to_matrix", h.postMapping)
-	e.GET("/api/internal/map_number_to_matrix", h.getMapping)
 	e.GET("/api/internal/push_tokens", h.getPushTokens)
 	e.DELETE("/api/internal/push_tokens", h.resetPushTokens)
 
@@ -96,63 +94,6 @@ func (h handler) pushTokenReport(c echo.Context) error {
 	}
 
 	logger.Info().Str("endpoint", "push_token_report").Str("selector", req.Selector).Msg("push token reported successfully")
-	return c.JSON(http.StatusOK, resp)
-}
-
-func (h handler) postMapping(c echo.Context) error {
-	if err := h.ensureAdminAccess(c); err != nil {
-		return err
-	}
-
-	var req models.MappingRequest
-	if err := c.Bind(&req); err != nil {
-		logger.Warn().Str("endpoint", "post_mapping").Err(err).Msg("invalid request payload")
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
-	}
-
-	logger.Debug().Str("endpoint", "post_mapping").Int("number", req.Number).Msg("saving mapping")
-
-	resp, err := h.svc.SaveMapping(&req)
-	if err != nil {
-		logger.Error().Str("endpoint", "post_mapping").Int("number", req.Number).Err(err).Msg("failed to save mapping")
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-
-	logger.Info().Str("endpoint", "post_mapping").Int("number", req.Number).Msg("mapping saved successfully")
-	return c.JSON(http.StatusOK, resp)
-}
-
-func (h handler) getMapping(c echo.Context) error {
-	if err := h.ensureAdminAccess(c); err != nil {
-		return err
-	}
-
-	number := strings.TrimSpace(c.QueryParam("number"))
-	if number == "" {
-		logger.Debug().Str("endpoint", "get_mapping").Msg("listing all mappings")
-		// return full mappings list when number is not provided
-		respList, err := h.svc.ListMappings()
-		if err != nil {
-			logger.Error().Str("endpoint", "get_mapping").Err(err).Msg("failed to list mappings")
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-		}
-		logger.Info().Str("endpoint", "get_mapping").Int("count", len(respList)).Msg("listed all mappings")
-		return c.JSON(http.StatusOK, respList)
-	}
-
-	logger.Debug().Str("endpoint", "get_mapping").Str("number", number).Msg("looking up mapping")
-
-	resp, err := h.svc.LookupMapping(number)
-	if err != nil {
-		if errors.Is(err, service.ErrMappingNotFound) {
-			logger.Warn().Str("endpoint", "get_mapping").Str("number", number).Msg("mapping not found")
-			return echo.NewHTTPError(http.StatusNotFound, err.Error())
-		}
-		logger.Error().Str("endpoint", "get_mapping").Str("number", number).Err(err).Msg("failed to lookup mapping")
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-
-	logger.Info().Str("endpoint", "get_mapping").Str("number", number).Msg("mapping found")
 	return c.JSON(http.StatusOK, resp)
 }
 

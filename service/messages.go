@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,7 +33,13 @@ type MessageService struct {
 	matrixClient *matrix.MatrixClient
 	pushTokenDB  *db.Database
 	now          func() time.Time
-	proxyURL     string // Public-facing URL of this proxy (e.g., https://matrix-proxy.example.com)
+	proxyURL     string // Public-facing URL of this proxy (e.g., https://matrix.example.com)
+	// External auth configuration
+	extAuthURL     string
+	extAuthTimeout time.Duration
+	authClient     AuthClient
+	// Homeserver host used to build Matrix IDs from auth response
+	homeserverHost string
 
 	mu          sync.RWMutex
 	mappings    map[string]mappingEntry
@@ -66,6 +73,27 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 	cacheTTL := time.Duration(cacheTTLSeconds) * time.Second
 	logger.Debug().Int("cache_ttl_seconds", cacheTTLSeconds).Msg("initialized message service with cache TTL")
 
+	// External auth configuration
+	extAuthURL := os.Getenv("EXT_AUTH_URL")
+	if extAuthURL == "" {
+		extAuthURL = "https://voice.gs.nethserver.net/freepbx/testextauth"
+	}
+
+	extAuthTimeoutS := 5
+	if v := os.Getenv("EXT_AUTH_TIMEOUT_S"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			extAuthTimeoutS = parsed
+		}
+	}
+
+	// Derive homeserver host from MATRIX_HOMESERVER_URL if present
+	homeserverHost := ""
+	if hsURL := os.Getenv("MATRIX_HOMESERVER_URL"); hsURL != "" {
+		if u, err := url.Parse(hsURL); err == nil {
+			homeserverHost = u.Hostname()
+		}
+	}
+
 	return &MessageService{
 		matrixClient:         matrixClient,
 		pushTokenDB:          pushTokenDB,
@@ -76,6 +104,10 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 		roomAliasCache:       NewRoomAliasCache(cacheTTL),
 		roomAliasesCache:     NewRoomAliasesCache(cacheTTL),
 		roomParticipantCache: NewRoomParticipantCache(cacheTTL),
+		extAuthURL:           extAuthURL,
+		extAuthTimeout:       time.Duration(extAuthTimeoutS) * time.Second,
+		authClient:           NewHTTPAuthClient(extAuthURL, time.Duration(extAuthTimeoutS)*time.Second, cacheTTL),
+		homeserverHost:       homeserverHost,
 	}
 }
 
@@ -92,41 +124,87 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		return nil, ErrInvalidSender
 	}
 
+	// If sender is already a Matrix ID, skip external auth
+	if !strings.HasPrefix(senderStr, "@") {
+		// Not a Matrix ID - check if we have a mapping for it
+		resolvedMatrix := s.resolveMatrixUser(senderStr)
+		if resolvedMatrix == "" {
+			// No mapping exists - try external auth if password is provided
+			if strings.TrimSpace(req.Password) == "" {
+				logger.Warn().Str("sender", senderStr).Msg("sender not resolvable and no password provided")
+				return nil, ErrAuthentication
+			}
+			mappings, ok, err := s.authClient.Validate(ctx, senderStr, strings.TrimSpace(req.Password), s.homeserverHost)
+			if err != nil {
+				if !ok {
+					logger.Warn().Str("sender", senderStr).Msg("external auth failed: unauthorized")
+					return nil, ErrAuthentication
+				}
+				logger.Error().Err(err).Msg("external auth request failed")
+				return nil, fmt.Errorf("external auth request failed: %w", err)
+			}
+			// Persist all mappings returned by auth
+			for _, mapReq := range mappings {
+				if _, err := s.SaveMapping(mapReq); err != nil {
+					logger.Error().Err(err).Msg("failed to save mapping from external auth response (send)")
+					return nil, fmt.Errorf("failed to save mapping: %w", err)
+				}
+			}
+		} else {
+			logger.Debug().Str("sender", senderStr).Str("resolved_matrix_id", string(resolvedMatrix)).Msg("sender resolved from existing mapping, skipping external auth")
+		}
+	} else {
+		logger.Debug().Str("sender", senderStr).Msg("sender is already a Matrix ID, skipping external auth")
+	}
+
+	// Resolve sender to Matrix ID using mappings
+	senderMatrix := s.resolveMatrixUser(req.From)
+	if senderMatrix == "" {
+		logger.Warn().Str("from", req.From).Msg("resolved to empty Matrix user ID")
+		return nil, ErrAuthentication
+	}
+
 	recipientStr := strings.TrimSpace(req.To)
 	if recipientStr == "" {
 		logger.Warn().Msg("send message: empty recipient")
 		return nil, ErrInvalidRecipient
 	}
 
-	// Resolve sender to a valid Matrix user ID
-	sender := s.resolveMatrixUser(senderStr)
-	if sender == "" {
-		logger.Warn().Str("sender", senderStr).Msg("sender is not a valid Matrix user ID")
-		return nil, ErrInvalidSender
+	// Check if recipient is a room ID first
+	var roomID id.RoomID
+	var recipientMatrix id.UserID
+	if strings.HasPrefix(recipientStr, "!") {
+		// It's already a room ID, use it directly
+		roomID = id.RoomID(recipientStr)
+		logger.Debug().Str("recipient", string(roomID)).Msg("recipient is a room ID, using directly")
+	} else {
+		// Try to resolve as Matrix user ID or mapping
+		recipientMatrix = s.resolveMatrixUser(recipientStr)
+		if recipientMatrix == "" {
+			logger.Warn().Str("recipient", recipientStr).Msg("recipient is not a valid Matrix user ID or room ID")
+			return nil, ErrInvalidRecipient
+		}
+
+		logger.Debug().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Msg("resolved sender and recipient to Matrix user IDs")
+
+		// For 1-to-1 messaging, ensure a direct room exists between sender and recipient
+		var err error
+		roomID, err = s.ensureDirectRoom(ctx, senderMatrix, recipientMatrix)
+		if err != nil {
+			logger.Error().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Err(err).Msg("failed to ensure direct room")
+			return nil, err
+		}
 	}
 
-	// Resolve recipient to a valid Matrix user ID
-	recipient := s.resolveMatrixUser(recipientStr)
-	if recipient == "" {
-		logger.Warn().Str("recipient", recipientStr).Msg("recipient is not a valid Matrix user ID")
-		return nil, ErrInvalidRecipient
+	if recipientMatrix != "" {
+		logger.Debug().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Str("room_id", string(roomID)).Msg("sending message to direct room")
+	} else {
+		logger.Debug().Str("sender", string(senderMatrix)).Str("room_id", string(roomID)).Msg("sending message to room")
 	}
-
-	logger.Debug().Str("sender", string(sender)).Str("recipient", string(recipient)).Msg("resolved sender and recipient to Matrix user IDs")
-
-	// For 1-to-1 messaging, ensure a direct room exists between sender and recipient
-	roomID, err := s.ensureDirectRoom(ctx, sender, recipient)
-	if err != nil {
-		logger.Error().Str("sender", string(sender)).Str("recipient", string(recipient)).Err(err).Msg("failed to ensure direct room")
-		return nil, err
-	}
-
-	logger.Debug().Str("sender", string(sender)).Str("recipient", string(recipient)).Str("room_id", string(roomID)).Msg("sending message to direct room")
-
 	// Ensure the sender is a member of the room (in case join failed during room creation)
-	_, err = s.matrixClient.JoinRoom(ctx, sender, roomID)
+	_, err := s.matrixClient.JoinRoom(ctx, senderMatrix, roomID)
 	if err != nil {
-		logger.Error().Str("sender", string(sender)).Str("room_id", string(roomID)).Err(err).Msg("failed to join room")
+		logger.Error().Str("sender", string(senderMatrix)).Str("room_id", string(roomID)).Err(err).Msg("failed to join room")
 		return nil, fmt.Errorf("send message: %w", err)
 	}
 
@@ -135,13 +213,13 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		Body:    req.Body,
 	}
 
-	resp, err := s.matrixClient.SendMessage(ctx, sender, roomID, content)
+	resp, err := s.matrixClient.SendMessage(ctx, senderMatrix, roomID, content)
 	if err != nil {
-		logger.Error().Str("sender", string(sender)).Str("room_id", string(roomID)).Err(err).Msg("failed to send message")
+		logger.Error().Str("sender", string(senderMatrix)).Str("room_id", string(roomID)).Err(err).Msg("failed to send message")
 		return nil, fmt.Errorf("send message: %w", mapAuthErr(err))
 	}
 
-	logger.Debug().Str("sender", string(sender)).Str("room_id", string(roomID)).Str("event_id", string(resp.EventID)).Msg("message sent successfully")
+	logger.Debug().Str("sender", string(senderMatrix)).Str("room_id", string(roomID)).Str("event_id", string(resp.EventID)).Msg("message sent successfully")
 	return &models.SendMessageResponse{ID: string(resp.EventID)}, nil
 }
 
@@ -149,10 +227,50 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMessagesRequest) (*models.FetchMessagesResponse, error) {
 	logger.Debug().Interface("request", req).Msg("fetch messages request received")
 
-	// The username sent by the app is always an extension number like 91201
-	userID := s.resolveMatrixUser(strings.TrimSpace(req.Username))
+	// Authenticate user using external auth (require password)
+	userName := strings.TrimSpace(req.Username)
+	if userName == "" {
+		logger.Warn().Msg("fetch messages: empty username")
+		return nil, ErrAuthentication
+	}
+
+	// If username is already a Matrix ID, skip external auth
+	if !strings.HasPrefix(userName, "@") {
+		// Not a Matrix ID - check if we have a mapping for it
+		resolvedMatrix := s.resolveMatrixUser(userName)
+		if resolvedMatrix == "" {
+			// No mapping exists - try external auth if password is provided
+			if strings.TrimSpace(req.Password) == "" {
+				logger.Warn().Str("username", userName).Msg("username not resolvable and no password provided")
+				return nil, ErrAuthentication
+			}
+			mappings, ok, err := s.authClient.Validate(ctx, userName, strings.TrimSpace(req.Password), s.homeserverHost)
+			if err != nil {
+				if !ok {
+					logger.Warn().Str("username", userName).Msg("external auth failed: unauthorized")
+					return nil, ErrAuthentication
+				}
+				logger.Error().Err(err).Msg("external auth request failed")
+				return nil, fmt.Errorf("external auth request failed: %w", err)
+			}
+			// Persist all mappings returned by auth
+			for _, mapReq := range mappings {
+				if _, err := s.SaveMapping(mapReq); err != nil {
+					logger.Error().Err(err).Msg("failed to save mapping from external auth response (fetch)")
+					return nil, fmt.Errorf("failed to save mapping: %w", err)
+				}
+			}
+		} else {
+			logger.Debug().Str("username", userName).Str("resolved_matrix_id", string(resolvedMatrix)).Msg("username resolved from existing mapping, skipping external auth")
+		}
+	} else {
+		logger.Debug().Str("username", userName).Msg("username is already a Matrix ID, skipping external auth")
+	}
+
+	// Resolve username to Matrix ID using mappings
+	userID := s.resolveMatrixUser(userName)
 	if userID == "" {
-		logger.Warn().Msg("fetch messages: empty user ID")
+		logger.Warn().Str("username", userName).Msg("resolved to empty Matrix user ID")
 		return nil, ErrAuthentication
 	}
 
@@ -653,20 +771,45 @@ func (s *MessageService) ReportPushToken(ctx context.Context, req *models.PushTo
 		return nil, errors.New("selector is required")
 	}
 
+	// Require password field for push token reporting
+	password := strings.TrimSpace(req.Password)
+	if password == "" {
+		logger.Warn().Msg("push token report: empty password")
+		return nil, errors.New("password is required")
+	}
+
 	if s.pushTokenDB == nil {
 		logger.Warn().Msg("push token report: database not initialized")
 		return nil, errors.New("push token storage not available")
 	}
 
+	// Validate extension + secret with external auth via AuthClient
+	mappings, ok, err := s.authClient.Validate(ctx, userName, strings.TrimSpace(req.Password), s.homeserverHost)
+	if err != nil {
+		if !ok {
+			logger.Warn().Str("username", userName).Msg("external auth failed: unauthorized")
+			return nil, ErrAuthentication
+		}
+		logger.Error().Err(err).Msg("external auth request failed")
+		return nil, fmt.Errorf("external auth request failed: %w", err)
+	}
+
+	// Save all mappings from auth response
+	for _, mapReq := range mappings {
+		if _, err := s.SaveMapping(mapReq); err != nil {
+			logger.Error().Err(err).Msg("failed to save mapping from external auth response")
+			return nil, fmt.Errorf("failed to save mapping: %w", err)
+		}
+	}
+
 	// Save to database
-	err := s.pushTokenDB.SavePushToken(
+	if err := s.pushTokenDB.SavePushToken(
 		selector,
 		req.TokenMsgs,
 		req.AppIDMsgs,
 		req.TokenCalls,
 		req.AppIDCalls,
-	)
-	if err != nil {
+	); err != nil {
 		logger.Error().Err(err).Str("selector", selector).Msg("failed to save push token")
 		return nil, fmt.Errorf("failed to save push token: %w", err)
 	}
@@ -697,8 +840,7 @@ func (s *MessageService) ReportPushToken(ctx context.Context, req *models.PushTo
 			}
 
 			// Call Matrix client to register pusher
-			err = s.matrixClient.SetPusher(ctx, matrixUserID, pusherReq)
-			if err != nil {
+			if err := s.matrixClient.SetPusher(ctx, matrixUserID, pusherReq); err != nil {
 				// Log error but don't fail the request - push token was still saved
 				logger.Error().
 					Err(err).
