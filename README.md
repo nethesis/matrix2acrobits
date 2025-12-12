@@ -53,7 +53,7 @@ buildah build --layers -t ghcr.io/nethesis/matrix2acrobits:latest -f Containerfi
 
 ## Extra info
 
-- [Deploying with NS8](docs/DEPLOY_NS8.md)
+- [Deploying with NethServer 8](docs/DEPLOY.md)
 - [OpenAPI Specification](docs/openapi.yaml)
 - [Container Build & Usage](docs/CONTAINER.md)
 - [Direct messaging](docs/DIRECT_ROOMS-ALIASES.md)

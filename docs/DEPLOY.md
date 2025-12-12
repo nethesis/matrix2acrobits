@@ -1,45 +1,30 @@
-# Deploy NS8
+# Deploy
+
+The deploy consists of two main steps:
+1. Configure Acrobits provisioning
+2. Configure Synapse to register the Application Service
+
+## Acrobits
+
+Substutute `synapse.gs.nethserver.net` with your Matrix homeserver name.
+
+- **General Messaging Configuration**: select on **Web Service** datasource
+- **Outgoing SMS via Web Service**:
+  - URL (first field): `https://synapse.gs.nethserver.net/m2a/api/client/send_message`
+  - POST data (second field): `{ "from" : "%account[username]%", "password" : "%account[password]%", "to" : "%sms_to%", "body" : "%sms_body%" }`
+  - Content-Type (third field): `application/json`
+- **Fetch instant messages via Web Service**:
+  - URL (first field): `https://synapse.gs.nethserver.net/m2a/api/client/fetch_messages`
+  - POST data (second field): `{ "username" : "%account[username]%", "password" : "%account[password]%",   "last_id" : "%last_known_sms_id%", "last_sent_id" : "%last_known_sent_sms_id%", "device" : "%installid%" }`
+  - Content-Type (third field): `application/json`
+- **Push Token Reporter Web Service**:
+  - URL (first field): `https://synapse.gs.nethserver.net/m2a/api/client/push_token_report`
+  - POST data (second field): `{ "username" : "%account[username]%", "password" : "%account[password]%", "token_calls" : "%pushTokenIncomingCall%", "token_msgs" : "%pushTokenOther%", "selector" : "%selector%", "appId_calls": "%pushappid_incoming_call%", "appId_msgs" : "%pushappid_other%" }`
+  - Content-Type (third field): `application/json`
+
+## NethServer 8
 
 To function correctly, the proxy must be registered as an Application Service with your Synapse homeserver.
-
-## General instructions
-
-First, create a registration YAML file (e.g., `acrobits-proxy.yaml`) and place it on your homeserver. This file tells Synapse how to communicate with the proxy.
-
-**`acrobits-proxy.yaml`:**
-```yaml
-# A unique identifier for the application service.
-id: acrobits-proxy
-# The URL where Synapse can reach your proxy.
-# This may not be used for sending messages but is a required field.
-url: http://localhost:8080 
-# A secure, randomly generated token your proxy will use to authenticate with Synapse.
-as_token: "YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
-# A secure, randomly generated token Synapse will use to authenticate with your proxy.
-hs_token: "YOUR_SECURE_HOMESERVER_TOKEN"
-# The localpart of the 'bot' user for this application service.
-sender_localpart: _acrobits_proxy
-# This section grants the proxy the power to impersonate users.
-namespaces:
-  users:
-    - exclusive: false
-      regex: '@.*:your-homeserver-name.com'
-  aliases: []
-  rooms: []
-```
-*You must generate your own secure random strings for `as_token` and `hs_token`.*
-
-### 2. homeserver.yaml
-
-Next, add the path to your registration file to your Synapse `homeserver.yaml`:
-
-```yaml
-app_service_config_files:
-  - "/data/config/acrobits-proxy.yaml"
-```
-
-Finally, **restart your Synapse server** to load the new configuration.
-
 
 ## Manual setup on an existing NS8 installation
 
@@ -58,8 +43,7 @@ Download the container image:
 podman pull ghcr.io/nethesis/matrix2acrobits:latest
 ```
 
-
-Setup synapse application service:
+First, create a registration YAML file (e.g., `acrobits-proxy.yaml`) and place it on your homeserver. This file tells Synapse how to communicate with the proxy.
 ```
 cat <<EOF >synapse-config/acrobits-proxy.yaml
 id: acrobits-proxy
@@ -78,14 +62,25 @@ namespaces:
     - exclusive: false
       regex: '.*'
 EOF
+```
 
+Next, add the path to your registration file to your Synapse `homeserver.yaml`:
+
+```
 echo "app_service_config_files:" >> ../templates/synapse-homeserver.yaml
 echo "   - /data/config/acrobits-proxy.yaml" >> ../templates/synapse-homeserver.yaml
 ```
 
-Restart the services:
+You must generate your own secure random strings for `as_token` and `hs_token`.
+
+Restart the service:
 ```
 systemctl --user restart synapse
+```
+
+Start the matrix2acrobits container:
+```
+podman run -d --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debug  -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net -e SUPER_ADMIN_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net -e PROXY_URL=https://synapse.gs.nethserver.net/ -e EXT_AUTH_URL=https://voice.gs.nethserver.net/freepbx/rest/testextauth ghcr.io/nethesis/matrix2acrobits
 ```
 
 Configure traefik to route /m2a to the proxy:
