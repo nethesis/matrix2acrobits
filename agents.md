@@ -125,10 +125,8 @@ export LOGLEVEL=INFO  # DEBUG, INFO, WARNING, or CRITICAL
 
 ## Definition of Done
 
-- Both `/fetch_messages` and `/send_message` endpoints are implemented according to the OpenAPI spec below.
-- Authentication works dynamically (proxy does not store credentials; it uses them to auth with Matrix on every request or caches the session).
-- `fetch_messages` correctly handles the `last_id` cursor to only return new messages.
+- All endpoints are implemented according to the OpenAPI spec (`docs/openapi.yaml`).
 - Standard Go tests (unit and integration) are passing.
-- Code is linted and formatted using `gofmt` and `golangci-lint`.
+- Code is linted and formatted using `gofmt`.
 
 
