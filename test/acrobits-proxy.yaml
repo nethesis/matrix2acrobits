@@ -4,7 +4,6 @@ id: acrobits-proxy
 # For now, this is not used, but it's a required field.
 url: http://localhost:8080
 # The token the application service (your proxy) will use to authenticate with Synapse.
-# This should match the SUPER_ADMIN_TOKEN environment variable for the proxy.
 as_token: admin-token
 # The token the homeserver (Synapse) will use to authenticate with your proxy.
 hs_token: synapse-token

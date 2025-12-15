@@ -81,12 +81,12 @@ func NewConfig() (*Config, error) {
 	}
 	logger.Debug().Str("MATRIX_HOMESERVER_URL", cfg.MatrixHomeserverURL).Msg("matrix homeserver URL loaded from environment")
 
-	cfg.MatrixAsToken = os.Getenv("SUPER_ADMIN_TOKEN")
+	cfg.MatrixAsToken = os.Getenv("MATRIX_AS_TOKEN")
 	if cfg.MatrixAsToken == "" {
-		logger.Error().Msg("SUPER_ADMIN_TOKEN environment variable is missing")
-		return nil, fmt.Errorf("SUPER_ADMIN_TOKEN is required (must be the Application Service as_token)")
+		logger.Error().Msg("MATRIX_AS_TOKEN environment variable is missing")
+		return nil, fmt.Errorf("MATRIX_AS_TOKEN is required (must be the Application Service as_token)")
 	}
-	logger.Debug().Msg("SUPER_ADMIN_TOKEN loaded from environment")
+	logger.Debug().Msg("MATRIX_AS_TOKEN loaded from environment")
 
 	asUserIDStr := os.Getenv("AS_USER_ID")
 	if asUserIDStr == "" {

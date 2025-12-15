@@ -73,7 +73,7 @@ func loadTestEnv() (*testConfig, error) {
 		switch key {
 		case "MATRIX_HOMESERVER_URL":
 			cfg.homeserverURL = value
-		case "SUPER_ADMIN_TOKEN":
+		case "MATRIX_AS_TOKEN":
 			cfg.adminToken = value
 		case "USER1":
 			cfg.user1 = value

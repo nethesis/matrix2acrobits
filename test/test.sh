@@ -95,7 +95,7 @@ start() {
     echo "Creating Matrix user: ${username}"
     local response
     response=$(curl -s -w "\n%{http_code}" -X PUT "http://localhost:8008/_synapse/admin/v2/users/@${username}" \
-      -H "Authorization: Bearer ${SUPER_ADMIN_TOKEN}" \
+      -H "Authorization: Bearer ${MATRIX_AS_TOKEN}" \
       -H "Content-Type: application/json" \
       -d "{\"password\": \"${password}\", \"admin\": false}" 2>&1)
 

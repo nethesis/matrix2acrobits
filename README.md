@@ -14,7 +14,7 @@ The proxy is configured via environment variables. Minimal required env:
 
 - `MATRIX_HOMESERVER_URL`: URL of your Matrix homeserver (e.g. `https://matrix.example`),
   used also to derive the hostname when constructing Matrix IDs from external auth responses
-- `SUPER_ADMIN_TOKEN`: the Application Service `as_token` from your registration file
+- `MATRIX_AS_TOKEN`: the Application Service `as_token` from your registration file
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
 - `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
 - `PROXY_URL` (optional): public-facing URL of this proxy (e.g. `https://matrix.example.com`), if not specified, use the value of `MATRIX_HOMESERVER_URL`

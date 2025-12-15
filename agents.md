@@ -79,7 +79,7 @@ buildah  build --layers -t ghcr.io/nethesis/matrix2acrobits:latest .
 
 To validate the built image:
 ```
-podman run --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debug  -e MATRIX_HOMESERVER_URL=https://example.local -e SUPER_ADMIN_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:example.local ghcr.io/nethesis/matrix2acrobits:latest
+podman run --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debug  -e MATRIX_HOMESERVER_URL=https://example.local -e MATRIX_AS_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:example.local ghcr.io/nethesis/matrix2acrobits:latest
 
 ```
 
@@ -89,7 +89,7 @@ podman run --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debu
 
 ```bash
 export MATRIX_HOMESERVER_URL="https://matrix.your-homeserver-name.com"
-export SUPER_ADMIN_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
+export MATRIX_AS_TOKEN="YOUR_SECURE_APPLICATION_SERVICE_TOKEN"
 export PROXY_PORT=8080
 export LOGLEVEL=INFO  # DEBUG, INFO, WARNING, or CRITICAL
 ./matrix2acrobits
