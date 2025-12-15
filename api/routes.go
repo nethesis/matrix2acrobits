@@ -104,9 +104,8 @@ func (h handler) getPushTokens(c echo.Context) error {
 
 	logger.Debug().Str("endpoint", "get_push_tokens").Msg("fetching all push tokens")
 
-	if h.pushTokenDB == nil {
-		logger.Error().Str("endpoint", "get_push_tokens").Msg("push token database not available")
-		return echo.NewHTTPError(http.StatusInternalServerError, "push token database not available")
+	if err := h.ensurePushTokenDB("get_push_tokens"); err != nil {
+		return err
 	}
 
 	tokens, err := h.pushTokenDB.ListPushTokens()
@@ -126,9 +125,8 @@ func (h handler) resetPushTokens(c echo.Context) error {
 
 	logger.Debug().Str("endpoint", "reset_push_tokens").Msg("resetting push tokens database")
 
-	if h.pushTokenDB == nil {
-		logger.Error().Str("endpoint", "reset_push_tokens").Msg("push token database not available")
-		return echo.NewHTTPError(http.StatusInternalServerError, "push token database not available")
+	if err := h.ensurePushTokenDB("reset_push_tokens"); err != nil {
+		return err
 	}
 
 	if err := h.pushTokenDB.ResetPushTokens(); err != nil {
@@ -150,6 +148,15 @@ func (h handler) ensureAdminAccess(c echo.Context) error {
 	token := c.Request().Header.Get(adminTokenHeader)
 	if token == "" || token != h.adminToken {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid admin token")
+	}
+	return nil
+}
+
+// ensurePushTokenDB validates that the push token database is initialized
+func (h handler) ensurePushTokenDB(endpoint string) error {
+	if h.pushTokenDB == nil {
+		logger.Error().Str("endpoint", endpoint).Msg("push token database not available")
+		return echo.NewHTTPError(http.StatusInternalServerError, "push token database not available")
 	}
 	return nil
 }

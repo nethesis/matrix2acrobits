@@ -21,22 +21,25 @@ const (
 	LevelCritical Level = "CRITICAL"
 )
 
-// Init initializes the global logger with the specified level
-func Init(level Level) {
-	var zLevel zerolog.Level
+// toLevelValue converts a Level string to zerolog.Level
+func toLevelValue(level Level) zerolog.Level {
 	switch strings.ToUpper(string(level)) {
 	case string(LevelDebug):
-		zLevel = zerolog.DebugLevel
+		return zerolog.DebugLevel
 	case string(LevelInfo):
-		zLevel = zerolog.InfoLevel
+		return zerolog.InfoLevel
 	case string(LevelWarning):
-		zLevel = zerolog.WarnLevel
+		return zerolog.WarnLevel
 	case string(LevelCritical):
-		zLevel = zerolog.ErrorLevel
+		return zerolog.ErrorLevel
 	default:
-		zLevel = zerolog.InfoLevel
+		return zerolog.InfoLevel
 	}
+}
 
+// Init initializes the global logger with the specified level
+func Init(level Level) {
+	zLevel := toLevelValue(level)
 	zerolog.SetGlobalLevel(zLevel)
 	// Configure zerolog for human-readable output
 	log = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).Level(zLevel).With().Timestamp().Logger()
@@ -44,20 +47,7 @@ func Init(level Level) {
 
 // InitWithWriter initializes the logger with a custom writer (useful for testing)
 func InitWithWriter(level Level, w io.Writer) {
-	var zLevel zerolog.Level
-	switch strings.ToUpper(string(level)) {
-	case string(LevelDebug):
-		zLevel = zerolog.DebugLevel
-	case string(LevelInfo):
-		zLevel = zerolog.InfoLevel
-	case string(LevelWarning):
-		zLevel = zerolog.WarnLevel
-	case string(LevelCritical):
-		zLevel = zerolog.ErrorLevel
-	default:
-		zLevel = zerolog.InfoLevel
-	}
-
+	zLevel := toLevelValue(level)
 	zerolog.SetGlobalLevel(zLevel)
 	// Configure zerolog for human-readable output
 	log = zerolog.New(zerolog.ConsoleWriter{Out: w, TimeFormat: time.RFC3339}).Level(zLevel).With().Timestamp().Logger()

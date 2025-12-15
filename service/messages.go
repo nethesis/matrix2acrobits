@@ -113,6 +113,30 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 	}
 }
 
+// validateAndPersistMappings validates credentials with the external auth service
+// and persists all returned mappings to the local store.
+// Returns ErrAuthentication if validation fails.
+func (s *MessageService) validateAndPersistMappings(ctx context.Context, username, password string) error {
+	mappings, ok, err := s.authClient.Validate(ctx, username, strings.TrimSpace(password), s.homeserverHost)
+	if err != nil {
+		if !ok {
+			logger.Warn().Str("username", username).Msg("external auth failed: unauthorized")
+			return ErrAuthentication
+		}
+		logger.Error().Err(err).Msg("external auth request failed")
+		return fmt.Errorf("external auth request failed: %w", err)
+	}
+
+	// Persist all mappings returned by auth
+	for _, mapReq := range mappings {
+		if _, err := s.SaveMapping(mapReq); err != nil {
+			logger.Error().Err(err).Msg("failed to save mapping from external auth response")
+			return fmt.Errorf("failed to save mapping: %w", err)
+		}
+	}
+	return nil
+}
+
 // SendMessage translates an Acrobits send_message request into Matrix /send.
 // Only 1-to-1 direct messaging is supported.
 // Both sender and recipient are resolved to Matrix user IDs using local mappings if necessary.
@@ -136,21 +160,8 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 				logger.Warn().Str("sender", senderStr).Msg("sender not resolvable and no password provided")
 				return nil, ErrAuthentication
 			}
-			mappings, ok, err := s.authClient.Validate(ctx, senderStr, strings.TrimSpace(req.Password), s.homeserverHost)
-			if err != nil {
-				if !ok {
-					logger.Warn().Str("sender", senderStr).Msg("external auth failed: unauthorized")
-					return nil, ErrAuthentication
-				}
-				logger.Error().Err(err).Msg("external auth request failed")
-				return nil, fmt.Errorf("external auth request failed: %w", err)
-			}
-			// Persist all mappings returned by auth
-			for _, mapReq := range mappings {
-				if _, err := s.SaveMapping(mapReq); err != nil {
-					logger.Error().Err(err).Msg("failed to save mapping from external auth response (send)")
-					return nil, fmt.Errorf("failed to save mapping: %w", err)
-				}
+			if err := s.validateAndPersistMappings(context.Background(), senderStr, req.Password); err != nil {
+				return nil, err
 			}
 		} else {
 			logger.Debug().Str("sender", senderStr).Str("resolved_matrix_id", string(resolvedMatrix)).Msg("sender resolved from existing mapping, skipping external auth")
@@ -246,21 +257,8 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 				logger.Warn().Str("username", userName).Msg("username not resolvable and no password provided")
 				return nil, ErrAuthentication
 			}
-			mappings, ok, err := s.authClient.Validate(ctx, userName, strings.TrimSpace(req.Password), s.homeserverHost)
-			if err != nil {
-				if !ok {
-					logger.Warn().Str("username", userName).Msg("external auth failed: unauthorized")
-					return nil, ErrAuthentication
-				}
-				logger.Error().Err(err).Msg("external auth request failed")
-				return nil, fmt.Errorf("external auth request failed: %w", err)
-			}
-			// Persist all mappings returned by auth
-			for _, mapReq := range mappings {
-				if _, err := s.SaveMapping(mapReq); err != nil {
-					logger.Error().Err(err).Msg("failed to save mapping from external auth response (fetch)")
-					return nil, fmt.Errorf("failed to save mapping: %w", err)
-				}
+			if err := s.validateAndPersistMappings(ctx, userName, req.Password); err != nil {
+				return nil, err
 			}
 		} else {
 			logger.Debug().Str("username", userName).Str("resolved_matrix_id", string(resolvedMatrix)).Msg("username resolved from existing mapping, skipping external auth")
@@ -461,18 +459,7 @@ func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roo
 	for _, alias := range aliases {
 		logger.Debug().Str("alias", alias).Msg("processing room alias")
 
-		// Normalize alias to form "localpart1|localpart2" (strip leading '#' and domain suffix)
-		normalizeLocal := func(v string) string {
-			v = strings.TrimSpace(v)
-			v = strings.TrimPrefix(v, "#")
-			v = strings.TrimPrefix(v, "@")
-			if i := strings.IndexByte(v, ':'); i != -1 {
-				v = v[:i]
-			}
-			return strings.ToLower(strings.TrimSpace(v))
-		}
-
-		norm := normalizeLocal(alias)
+		norm := normalizeLocalpart(alias)
 		parts := strings.SplitN(norm, "|", 2)
 		if len(parts) != 2 {
 			logger.Debug().Str("alias", alias).Msg("room alias does not conform to expected format after normalization")
@@ -481,7 +468,7 @@ func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roo
 		left := strings.TrimSpace(parts[0])
 		right := strings.TrimSpace(parts[1])
 
-		me := normalizeLocal(myMatrixID)
+		me := normalizeLocalpart(myMatrixID)
 
 		var otherLocal string
 		if strings.EqualFold(left, me) {
@@ -499,7 +486,7 @@ func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roo
 		// Now transform the other localpart to a matrix ID, then search inside mapping: return the number
 		s.mu.RLock()
 		for _, entry := range s.mappings {
-			normMatrixID := normalizeLocal(entry.MatrixID)
+			normMatrixID := normalizeLocalpart(entry.MatrixID)
 			if normMatrixID == otherLocal {
 				s.mu.RUnlock()
 				// Prefer Number as the identifier
@@ -522,17 +509,8 @@ func (s *MessageService) resolveRoomIDToOtherIdentifier(ctx context.Context, roo
 }
 
 func generateRoomAliasKey(actingUserID id.UserID, targetUserID id.UserID) string {
-	normalize := func(uid id.UserID) string {
-		s := strings.TrimSpace(string(uid))
-		s = strings.TrimPrefix(s, "@")
-		if i := strings.IndexByte(s, ':'); i != -1 {
-			s = s[:i]
-		}
-		return strings.ToLower(s)
-	}
-
-	a := normalize(actingUserID)
-	b := normalize(targetUserID)
+	a := normalizeLocalpart(string(actingUserID))
+	b := normalizeLocalpart(string(targetUserID))
 
 	// Ensure deterministic ordering: smaller|larger
 	if a == "" && b == "" {
@@ -717,8 +695,17 @@ func normalizeMatrixID(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-func normalizeMappingKey(value string) string {
-	return strings.TrimSpace(value)
+// normalizeLocalpart extracts and normalizes the local part of a Matrix ID or alias.
+// It strips leading prefixes (@, #), removes the domain suffix (part after ':'),
+// and converts to lowercase for consistent comparison.
+func normalizeLocalpart(value string) string {
+	v := strings.TrimSpace(value)
+	v = strings.TrimPrefix(v, "#")
+	v = strings.TrimPrefix(v, "@")
+	if i := strings.IndexByte(v, ':'); i != -1 {
+		v = v[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(v))
 }
 
 func isSentBy(sender, username string) bool {
@@ -733,37 +720,6 @@ func mapAuthErr(err error) error {
 		return fmt.Errorf("%w", ErrAuthentication)
 	}
 	return err
-}
-
-// isPhoneNumber checks if a string looks like a phone number.
-// Returns true if the string contains only digits, spaces, hyphens, plus signs, and/or parentheses.
-func isPhoneNumber(s string) bool {
-	if s == "" {
-		return false
-	}
-	trimmed := strings.TrimSpace(s)
-	// Check if it starts with @ or ! or #, indicating it's a Matrix ID/room ID/alias
-	if strings.HasPrefix(trimmed, "@") || strings.HasPrefix(trimmed, "!") || strings.HasPrefix(trimmed, "#") {
-		return false
-	}
-	// A phone number contains only digits and optional formatting characters
-	for _, r := range trimmed {
-		if !isPhoneNumberRune(r) {
-			return false
-		}
-	}
-	// Must contain at least one digit
-	for _, r := range trimmed {
-		if r >= '0' && r <= '9' {
-			return true
-		}
-	}
-	return false
-}
-
-// isPhoneNumberRune checks if a rune is a valid character in a phone number
-func isPhoneNumberRune(r rune) bool {
-	return (r >= '0' && r <= '9') || r == ' ' || r == '-' || r == '+' || r == '(' || r == ')'
 }
 
 // ReportPushToken saves a push token to the database.
@@ -798,22 +754,8 @@ func (s *MessageService) ReportPushToken(ctx context.Context, req *models.PushTo
 	}
 
 	// Validate extension + secret with external auth via AuthClient
-	mappings, ok, err := s.authClient.Validate(ctx, userName, strings.TrimSpace(req.Password), s.homeserverHost)
-	if err != nil {
-		if !ok {
-			logger.Warn().Str("username", userName).Msg("external auth failed: unauthorized")
-			return nil, ErrAuthentication
-		}
-		logger.Error().Err(err).Msg("external auth request failed")
-		return nil, fmt.Errorf("external auth request failed: %w", err)
-	}
-
-	// Save all mappings from auth response
-	for _, mapReq := range mappings {
-		if _, err := s.SaveMapping(mapReq); err != nil {
-			logger.Error().Err(err).Msg("failed to save mapping from external auth response")
-			return nil, fmt.Errorf("failed to save mapping: %w", err)
-		}
+	if err := s.validateAndPersistMappings(ctx, userName, req.Password); err != nil {
+		return nil, err
 	}
 
 	// Save to database
