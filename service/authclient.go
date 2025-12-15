@@ -89,7 +89,9 @@ func (h *HTTPAuthClient) Validate(ctx context.Context, extension, secret, homese
 	if err != nil {
 		return []*models.MappingRequest{}, false, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	logger.Debug().Int("status", resp.StatusCode).Msg("authclient: received response")
 	if resp.StatusCode != http.StatusOK {

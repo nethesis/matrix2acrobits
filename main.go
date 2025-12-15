@@ -76,7 +76,11 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Str("path", pushTokenDBPath).Msg("failed to initialize push token database")
 	}
-	defer pushTokenDB.Close()
+	defer func() {
+		if err := pushTokenDB.Close(); err != nil {
+			logger.Warn().Err(err).Msg("failed to close push token database")
+		}
+	}()
 
 	// Get proxy URL for pusher registration
 	proxyURL := os.Getenv("PROXY_URL")

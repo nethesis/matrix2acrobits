@@ -44,7 +44,9 @@ func NewDatabase(dbPath string) (*Database, error) {
 
 	// Create schema if needed
 	if err := d.createSchema(); err != nil {
-		db.Close()
+		if cerr := db.Close(); cerr != nil {
+			logger.Warn().Err(cerr).Msg("failed to close sqlite database after createSchema error")
+		}
 		return nil, err
 	}
 
@@ -181,7 +183,9 @@ func (d *Database) ListPushTokens() ([]*PushToken, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query push tokens: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var tokens []*PushToken
 	for rows.Next() {
