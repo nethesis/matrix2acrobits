@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -62,54 +61,29 @@ type mappingEntry struct {
 }
 
 // NewMessageService wires the provided Matrix client and push token database into the service layer.
-func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Database, proxyURL string) *MessageService {
-	// Parse cache TTL from environment, default to 1 hour (3600 seconds)
-	cacheTTLStr := os.Getenv("CACHE_TTL_SECONDS")
-	cacheTTLSeconds := 3600
-	if cacheTTLStr != "" {
-		if parsed, err := strconv.Atoi(cacheTTLStr); err == nil && parsed > 0 {
-			cacheTTLSeconds = parsed
-		}
-	}
-	cacheTTL := time.Duration(cacheTTLSeconds) * time.Second
-	logger.Debug().Int("cache_ttl_seconds", cacheTTLSeconds).Msg("initialized message service with cache TTL")
+func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Database, cfg *Config) *MessageService {
+	logger.Debug().Int("cache_ttl_seconds", cfg.CacheTTLSeconds).Msg("initialized message service with cache TTL")
 
 	// External auth configuration
-	extAuthURL := os.Getenv("EXT_AUTH_URL")
-	if extAuthURL == "" {
+	if cfg.ExtAuthURL == "" {
 		logger.Warn().Msg("EXT_AUTH_URL not set!")
-	}
-
-	extAuthTimeoutS := 5
-	if v := os.Getenv("EXT_AUTH_TIMEOUT_S"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			extAuthTimeoutS = parsed
-		}
-	}
-
-	// Derive homeserver host from MATRIX_HOMESERVER_URL if present
-	homeserverHost := ""
-	if hsURL := os.Getenv("MATRIX_HOMESERVER_URL"); hsURL != "" {
-		if u, err := url.Parse(hsURL); err == nil {
-			homeserverHost = u.Hostname()
-		}
 	}
 
 	return &MessageService{
 		matrixClient:         matrixClient,
 		pushTokenDB:          pushTokenDB,
 		now:                  time.Now,
-		proxyURL:             proxyURL,
+		proxyURL:             cfg.ProxyURL,
 		mappings:             make(map[string]mappingEntry),
 		subNumberMappings:    make(map[int]string),
 		batchTokens:          make(map[string]string),
-		roomAliasCache:       NewRoomAliasCache(cacheTTL),
-		roomAliasesCache:     NewRoomAliasesCache(cacheTTL),
-		roomParticipantCache: NewRoomParticipantCache(cacheTTL),
-		extAuthURL:           extAuthURL,
-		extAuthTimeout:       time.Duration(extAuthTimeoutS) * time.Second,
-		authClient:           NewHTTPAuthClient(extAuthURL, time.Duration(extAuthTimeoutS)*time.Second, cacheTTL),
-		homeserverHost:       homeserverHost,
+		roomAliasCache:       NewRoomAliasCache(cfg.CacheTTL),
+		roomAliasesCache:     NewRoomAliasesCache(cfg.CacheTTL),
+		roomParticipantCache: NewRoomParticipantCache(cfg.CacheTTL),
+		extAuthURL:           cfg.ExtAuthURL,
+		extAuthTimeout:       cfg.ExtAuthTimeout,
+		authClient:           NewHTTPAuthClient(cfg.ExtAuthURL, cfg.ExtAuthTimeout, cfg.CacheTTL),
+		homeserverHost:       cfg.MatrixHomeserverHost,
 	}
 }
 
@@ -796,7 +770,9 @@ func (s *MessageService) ReportPushToken(ctx context.Context, req *models.PushTo
 			}
 
 			// Call Matrix client to register pusher
-			if err := s.matrixClient.SetPusher(ctx, matrixUserID, pusherReq); err != nil {
+			if s.matrixClient == nil {
+				logger.Warn().Str("selector", selector).Msg("Matrix client not available, skipping pusher registration")
+			} else if err := s.matrixClient.SetPusher(ctx, matrixUserID, pusherReq); err != nil {
 				// Log error but don't fail the request - push token was still saved
 				logger.Error().
 					Err(err).

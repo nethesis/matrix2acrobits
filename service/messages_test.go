@@ -131,7 +131,7 @@ func TestMapAuthErr(t *testing.T) {
 }
 
 func TestListMappings(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Seed two mappings
 	svc.setMapping(mappingEntry{
@@ -191,7 +191,7 @@ func TestLoadMappingsFromFile(t *testing.T) {
 	tmpFile.Close()
 
 	// Create a message service
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Load mappings from file
 	err = svc.LoadMappingsFromFile(tmpFile.Name())
@@ -237,7 +237,7 @@ func TestLoadMappingsFromFile_LegacyFormat(t *testing.T) {
 	tmpFile.Close()
 
 	// Create a message service
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Load mappings from file - should fail since we only support extended format now
 	err = svc.LoadMappingsFromFile(tmpFile.Name())
@@ -246,7 +246,7 @@ func TestLoadMappingsFromFile_LegacyFormat(t *testing.T) {
 }
 
 func TestLoadMappingsFromFile_FileNotFound(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	err := svc.LoadMappingsFromFile("/nonexistent/file.json")
 	assert.Error(t, err)
@@ -264,7 +264,7 @@ func TestLoadMappingsFromFile_InvalidJSON(t *testing.T) {
 	assert.NoError(t, err)
 	tmpFile.Close()
 
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	err = svc.LoadMappingsFromFile(tmpFile.Name())
 	assert.Error(t, err)
@@ -274,7 +274,7 @@ func TestLoadMappingsFromFile_InvalidJSON(t *testing.T) {
 func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 	// Test case 1: Resolve sub_number to matrix_id
 	t.Run("resolve sub_number to matrix_id", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:     201,
 			MatrixID:   "@giacomo:example.com",
@@ -288,7 +288,7 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 
 	// Test case 2: Resolve main number to matrix_id
 	t.Run("resolve main number to matrix_id", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:   202,
 			MatrixID: "@mario:example.com",
@@ -301,7 +301,7 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 
 	// Test case 3: Resolve another sub_number
 	t.Run("resolve another sub_number", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:     201,
 			MatrixID:   "@giacomo:example.com",
@@ -315,21 +315,21 @@ func TestResolveMatrixUser_SubNumbers(t *testing.T) {
 
 	// Test case 4: Matrix ID passed directly
 	t.Run("matrix id passed directly", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		result := svc.resolveMatrixUser("@test:example.com")
 		assert.Equal(t, "@test:example.com", string(result), "should return matrix_id as-is if it starts with @")
 	})
 
 	// Test case 5: No mapping found
 	t.Run("no mapping found", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		result := svc.resolveMatrixUser("9999")
 		assert.Equal(t, "", string(result), "should return empty string if no mapping found")
 	})
 
 	// Test case 6: Case insensitivity
 	t.Run("case insensitive sub_number resolution", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:     201,
 			MatrixID:   "@giacomo:example.com",
@@ -346,7 +346,7 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	// Test case 1: Resolve via sub_number match
 	// When a matrix_id matches one of the sub_numbers, the main number should be returned (not the sub_number)
 	t.Run("resolve via sub_number match", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:     201,
 			MatrixID:   "@giacomo:example.com",
@@ -361,7 +361,7 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	// Test case 2: Resolve via main number
 	// When a matrix_id matches the main number field, return that number
 	t.Run("resolve via main number", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:   202,
 			MatrixID: "@mario:example.com",
@@ -375,7 +375,7 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	// Test case 3: Sub_numbers should never be returned directly
 	// This is ensured by the logic that checks sub_numbers first, then returns the main number
 	t.Run("sub_numbers never returned directly", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:     201,
 			MatrixID:   "@giacomo:example.com",
@@ -392,7 +392,7 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 	// Test case 4: Case insensitivity
 	// Matrix IDs should be matched case-insensitively
 	t.Run("case insensitivity", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		svc.SaveMapping(&models.MappingRequest{
 			Number:     201,
 			MatrixID:   "@GIACOMO:EXAMPLE.COM",
@@ -406,7 +406,7 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 
 	// Test case 6: No mapping found, return original matrix_id
 	t.Run("no mapping returns original matrix_id", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		result := svc.resolveMatrixIDToIdentifier("@unknown:example.com")
 		assert.Equal(t, "@unknown:example.com", result, "should return original matrix_id when no mapping found")
 	})
@@ -415,7 +415,7 @@ func TestResolveMatrixIDToIdentifier_SubNumbers(t *testing.T) {
 func TestReportPushToken(t *testing.T) {
 	// Test with nil request
 	t.Run("nil request", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		resp, err := svc.ReportPushToken(context.TODO(), nil)
 		assert.Error(t, err)
 		assert.Nil(t, resp)
@@ -423,7 +423,7 @@ func TestReportPushToken(t *testing.T) {
 
 	// Test with empty selector
 	t.Run("empty selector", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		req := &models.PushTokenReportRequest{
 			UserName:  "@alice:example.com",
 			Selector:  "",
@@ -439,7 +439,7 @@ func TestReportPushToken(t *testing.T) {
 
 	// Test with no database
 	t.Run("no database", func(t *testing.T) {
-		svc := NewMessageService(nil, nil, "")
+		svc := NewMessageService(nil, nil, NewTestConfig())
 		req := &models.PushTokenReportRequest{
 			UserName:  "@alice:example.com",
 			Selector:  "12869E0E6E553673C54F29105A0647204C416A2A:7C3A0D14",
@@ -462,16 +462,12 @@ func TestReportPushToken(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"main_extension":"201","sub_extensions":["91201"],"user_name":"alice"}]`))
 		}))
 		defer ts.Close()
-		os.Setenv("EXT_AUTH_URL", ts.URL)
-		defer os.Unsetenv("EXT_AUTH_URL")
-		os.Setenv("MATRIX_HOMESERVER_URL", "https://example.com")
-		defer os.Unsetenv("MATRIX_HOMESERVER_URL")
 
 		db, err := db.NewDatabase(":memory:")
 		require.NoError(t, err)
 		defer db.Close()
 
-		svc := NewMessageService(nil, db, "")
+		svc := NewMessageService(nil, db, NewTestConfigWithAuth(ts.URL))
 		req := &models.PushTokenReportRequest{
 			UserName:   "201",
 			Selector:   "@alice:example.com",
@@ -501,16 +497,12 @@ func TestReportPushToken(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"main_extension":"201","sub_extensions":["91201"],"user_name":"alice"}]`))
 		}))
 		defer ts.Close()
-		os.Setenv("EXT_AUTH_URL", ts.URL)
-		defer os.Unsetenv("EXT_AUTH_URL")
-		os.Setenv("MATRIX_HOMESERVER_URL", "https://example.com")
-		defer os.Unsetenv("MATRIX_HOMESERVER_URL")
 
 		db, err := db.NewDatabase(":memory:")
 		require.NoError(t, err)
 		defer db.Close()
 
-		svc := NewMessageService(nil, db, "")
+		svc := NewMessageService(nil, db, NewTestConfigWithAuth(ts.URL))
 		req := &models.PushTokenReportRequest{
 			UserName:   "201",
 			Selector:   "@alice:example.com",
@@ -553,7 +545,7 @@ func TestReportPushToken_Auth401DoesNotSave(t *testing.T) {
 	require.NoError(t, err)
 	defer dbi.Close()
 
-	svc := NewMessageService(nil, dbi, "")
+	svc := NewMessageService(nil, dbi, NewTestConfig())
 	// inject fake auth client returning false (not authorized)
 	svc.authClient = &fakeAuthClient{ok: false}
 

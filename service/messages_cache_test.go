@@ -10,7 +10,7 @@ import (
 
 // TestMessageServiceCacheInitialization tests that MessageService initializes with caches.
 func TestMessageServiceCacheInitialization(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	assert.NotNil(t, svc.roomAliasCache, "roomAliasCache should be initialized")
 	assert.NotNil(t, svc.roomAliasesCache, "roomAliasesCache should be initialized")
@@ -19,7 +19,7 @@ func TestMessageServiceCacheInitialization(t *testing.T) {
 
 // TestRoomAliasCacheSetGet tests basic cache set/get operations within service context.
 func TestRoomAliasCacheSetGet(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	alias := "user1|user2"
 	roomID := "!room123:server"
@@ -36,7 +36,7 @@ func TestRoomAliasCacheSetGet(t *testing.T) {
 
 // TestRoomAliasesCacheSetGet tests basic cache set/get operations for room aliases.
 func TestRoomAliasesCacheSetGet(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	roomID := "!room123:server"
 	aliases := []string{"alias1", "alias2"}
@@ -54,7 +54,7 @@ func TestRoomAliasesCacheSetGet(t *testing.T) {
 
 // TestRoomParticipantCacheSetGet tests basic cache set/get for participant identifiers.
 func TestRoomParticipantCacheSetGet(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	key := "!room123:server|@user1:server"
 	identifier := "201"
@@ -98,7 +98,7 @@ func TestCacheTTLExpiration(t *testing.T) {
 
 // TestResolveRoomIDToOtherIdentifierCacheBehavior tests cache interactions in resolveRoomIDToOtherIdentifier.
 func TestResolveRoomIDToOtherIdentifierCacheBehavior(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Add a mapping so the resolution can complete
 	svc.setMapping(mappingEntry{
@@ -130,7 +130,7 @@ func TestResolveRoomIDToOtherIdentifierCacheBehavior(t *testing.T) {
 
 // TestParticipantCacheKeyUniquenessForDifferentViewers tests separate cache entries for different viewers.
 func TestParticipantCacheKeyUniquenessForDifferentViewers(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Add mappings for both users
 	svc.setMapping(mappingEntry{
@@ -167,7 +167,7 @@ func TestParticipantCacheKeyUniquenessForDifferentViewers(t *testing.T) {
 
 // TestCacheMultipleRoomAliases tests cache with multiple room aliases.
 func TestCacheMultipleRoomAliases(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Set multiple aliases
 	for i := 0; i < 10; i++ {
@@ -186,7 +186,7 @@ func TestCacheMultipleRoomAliases(t *testing.T) {
 
 // TestCacheEmptyAliasesList tests caching of empty aliases list.
 func TestCacheEmptyAliasesList(t *testing.T) {
-	svc := NewMessageService(nil, nil, "")
+	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	roomID := "!room123:server"
 

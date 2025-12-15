@@ -42,7 +42,7 @@ func TestIsLocalhost(t *testing.T) {
 
 func TestPushTokenReport(t *testing.T) {
 	e := echo.New()
-	svc := service.NewMessageService(nil, nil, "")
+	svc := service.NewMessageService(nil, nil, service.NewTestConfig())
 
 	t.Run("valid push token report", func(t *testing.T) {
 		reqBody := models.PushTokenReportRequest{
@@ -130,7 +130,7 @@ func TestGetPushTokens(t *testing.T) {
 	require.NoError(t, err)
 
 	e := echo.New()
-	svc := service.NewMessageService(nil, pushTokenDB, "")
+	svc := service.NewMessageService(nil, pushTokenDB, service.NewTestConfig())
 
 	t.Run("get all push tokens with valid token", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/internal/push_tokens", nil)
@@ -276,7 +276,7 @@ func TestResetPushTokens(t *testing.T) {
 	require.NoError(t, err)
 
 	e := echo.New()
-	svc := service.NewMessageService(nil, pushTokenDB, "")
+	svc := service.NewMessageService(nil, pushTokenDB, service.NewTestConfig())
 
 	t.Run("reset push tokens with valid token", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/internal/push_tokens", nil)

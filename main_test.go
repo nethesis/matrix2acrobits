@@ -147,7 +147,23 @@ func startTestServer(cfg *testConfig) (*echo.Echo, error) {
 		return nil, fmt.Errorf("initialize matrix client: %w", err)
 	}
 
-	svc := service.NewMessageService(matrixClient, nil, "")
+	// Create a Config from the test configuration
+	serviceCfg := &service.Config{
+		ProxyPort:            "18080",
+		LogLevel:             "INFO",
+		MatrixHomeserverURL:  cfg.homeserverURL,
+		MatrixAsToken:        cfg.adminToken,
+		MatrixAsUserID:       id.UserID(cfg.asUser),
+		MatrixHomeserverHost: cfg.serverName,
+		PushTokenDBPath:      "/tmp/push_tokens_test.db",
+		ProxyURL:             cfg.homeserverURL,
+		CacheTTLSeconds:      3600,
+		CacheTTL:             3600 * time.Second,
+		ExtAuthTimeoutS:      5,
+		ExtAuthTimeout:       5 * time.Second,
+	}
+
+	svc := service.NewMessageService(matrixClient, nil, serviceCfg)
 	pushSvc := service.NewPushService(nil)
 	api.RegisterRoutes(e, svc, pushSvc, cfg.adminToken, nil)
 
