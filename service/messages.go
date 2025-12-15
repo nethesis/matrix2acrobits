@@ -41,9 +41,10 @@ type MessageService struct {
 	// Homeserver host used to build Matrix IDs from auth response
 	homeserverHost string
 
-	mu          sync.RWMutex
-	mappings    map[string]mappingEntry
-	batchTokens map[string]string // userID -> next_batch token
+	mu                sync.RWMutex
+	mappings          map[string]mappingEntry
+	subNumberMappings map[int]string    // subNumber -> MatrixID
+	batchTokens       map[string]string // userID -> next_batch token
 
 	// Caches for room resolution
 	roomAliasCache       *RoomAliasCache
@@ -100,6 +101,7 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 		now:                  time.Now,
 		proxyURL:             proxyURL,
 		mappings:             make(map[string]mappingEntry),
+		subNumberMappings:    make(map[int]string),
 		batchTokens:          make(map[string]string),
 		roomAliasCache:       NewRoomAliasCache(cacheTTL),
 		roomAliasesCache:     NewRoomAliasesCache(cacheTTL),
@@ -392,13 +394,11 @@ func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
 
 	// If not found as main number, try to find it in any sub_numbers
 	s.mu.RLock()
-	for _, entry := range s.mappings {
-		for _, subNum := range entry.SubNumbers {
-			if strings.EqualFold(fmt.Sprintf("%d", subNum), identifier) {
-				s.mu.RUnlock()
-				logger.Debug().Str("original_identifier", identifier).Int("sub_number", subNum).Str("resolved_user", entry.MatrixID).Msg("identifier resolved from sub_number mapping")
-				return id.UserID(entry.MatrixID)
-			}
+	if subNum, err := strconv.Atoi(identifier); err == nil {
+		if matrixID, ok := s.subNumberMappings[subNum]; ok {
+			s.mu.RUnlock()
+			logger.Debug().Str("original_identifier", identifier).Int("sub_number", subNum).Str("resolved_user", matrixID).Msg("identifier resolved from sub_number mapping")
+			return id.UserID(matrixID)
 		}
 	}
 	s.mu.RUnlock()
@@ -599,8 +599,22 @@ func (s *MessageService) setMapping(entry mappingEntry) mappingEntry {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Clean up old sub-number mappings if updating an existing entry
+	if oldEntry, exists := s.mappings[fmt.Sprintf("%d", entry.Number)]; exists {
+		for _, sub := range oldEntry.SubNumbers {
+			delete(s.subNumberMappings, sub)
+		}
+	}
+
 	entry.UpdatedAt = s.now()
 	s.mappings[fmt.Sprintf("%d", entry.Number)] = entry
+
+	// Update sub-number index
+	for _, sub := range entry.SubNumbers {
+		s.subNumberMappings[sub] = entry.MatrixID
+	}
+
 	logger.Debug().Int("number", entry.Number).Str("room_id", string(entry.RoomID)).Msg("mapping stored")
 	return entry
 }

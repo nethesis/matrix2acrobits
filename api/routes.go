@@ -3,8 +3,8 @@ package api
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
-	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/nethesis/matrix2acrobits/db"
@@ -16,7 +16,7 @@ import (
 const adminTokenHeader = "X-Super-Admin-Token"
 
 // RegisterRoutes wires API endpoints to Echo handlers.
-func RegisterRoutes(e *echo.Echo, svc *service.MessageService, pushSvc *service.PushService, adminToken string, pushTokenDB interface{}) {
+func RegisterRoutes(e *echo.Echo, svc *service.MessageService, pushSvc *service.PushService, adminToken string, pushTokenDB *db.Database) {
 	h := handler{svc: svc, pushSvc: pushSvc, adminToken: adminToken, pushTokenDB: pushTokenDB}
 	e.POST("/api/client/send_message", h.sendMessage)
 	e.POST("/api/client/fetch_messages", h.fetchMessages)
@@ -34,7 +34,7 @@ type handler struct {
 	svc         *service.MessageService
 	pushSvc     *service.PushService
 	adminToken  string
-	pushTokenDB interface{}
+	pushTokenDB *db.Database
 }
 
 func (h handler) sendMessage(c echo.Context) error {
@@ -104,13 +104,12 @@ func (h handler) getPushTokens(c echo.Context) error {
 
 	logger.Debug().Str("endpoint", "get_push_tokens").Msg("fetching all push tokens")
 
-	db, ok := h.pushTokenDB.(*db.Database)
-	if !ok {
+	if h.pushTokenDB == nil {
 		logger.Error().Str("endpoint", "get_push_tokens").Msg("push token database not available")
 		return echo.NewHTTPError(http.StatusInternalServerError, "push token database not available")
 	}
 
-	tokens, err := db.ListPushTokens()
+	tokens, err := h.pushTokenDB.ListPushTokens()
 	if err != nil {
 		logger.Error().Str("endpoint", "get_push_tokens").Err(err).Msg("failed to list push tokens")
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -127,13 +126,12 @@ func (h handler) resetPushTokens(c echo.Context) error {
 
 	logger.Debug().Str("endpoint", "reset_push_tokens").Msg("resetting push tokens database")
 
-	db, ok := h.pushTokenDB.(*db.Database)
-	if !ok {
+	if h.pushTokenDB == nil {
 		logger.Error().Str("endpoint", "reset_push_tokens").Msg("push token database not available")
 		return echo.NewHTTPError(http.StatusInternalServerError, "push token database not available")
 	}
 
-	if err := db.ResetPushTokens(); err != nil {
+	if err := h.pushTokenDB.ResetPushTokens(); err != nil {
 		logger.Error().Str("endpoint", "reset_push_tokens").Err(err).Msg("failed to reset push tokens")
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
@@ -170,11 +168,12 @@ func mapServiceError(err error) error {
 }
 
 func (h handler) isLocalhost(ip string) bool {
-	trimmed := ip
-	if colon := strings.LastIndex(trimmed, ":"); colon != -1 {
-		trimmed = trimmed[:colon]
+	host, _, err := net.SplitHostPort(ip)
+	if err != nil {
+		// likely no port
+		host = ip
 	}
-	switch trimmed {
+	switch host {
 	case "127.0.0.1", "::1", "localhost":
 		return true
 	default:
