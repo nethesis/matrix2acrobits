@@ -127,6 +127,6 @@ export LOGLEVEL=INFO  # DEBUG, INFO, WARNING, or CRITICAL
 
 - All endpoints are implemented according to the OpenAPI spec (`docs/openapi.yaml`).
 - Standard Go tests (unit and integration) are passing.
-- Code is linted and formatted using `gofmt`.
+- Code is linted and formatted using `gofmt` and `golangci-lint`, ignore `golangci-lint` warnings on test files.
 
 
