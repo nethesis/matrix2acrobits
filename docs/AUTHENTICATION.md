@@ -17,6 +17,6 @@ If any request is missing a `password`, it fails with authentication error.
 
 ### Environment variables related to auth
 
-- `EXT_AUTH_URL`: external HTTP endpoint used to validate extension+password for push token reports (default: `https://voice.gs.nethserver.net/freepbx/testextauth`)
+- `EXT_AUTH_URL`: external HTTP endpoint used to validate extension+password for push token reports (eg: `https://voice.nethserver.org/freepbx/testextauth`)
 - `EXT_AUTH_TIMEOUT_S`: timeout in seconds for calls to `EXT_AUTH_URL` (default: `5`)
 - `CACHE_TTL_SECONDS`: cache TTL for external auth responses (default: `3600` seconds)

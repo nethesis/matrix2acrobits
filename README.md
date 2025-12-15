@@ -18,7 +18,7 @@ The proxy is configured via environment variables. Minimal required env:
 - `PROXY_PORT` (optional): port to listen on (default: `8080`)
 - `AS_USER_ID` (optional): the user ID of the Application Service bot (default: `@_acrobits_proxy:matrix.example`)
 - `PROXY_URL` (optional): public-facing URL of this proxy (e.g. `https://matrix.example.com`), if not specified, use the value of `MATRIX_HOMESERVER_URL`
- - `EXT_AUTH_URL` (optional): external HTTP endpoint used to validate extension+password for push token reports (default: `https://voice.gs.nethserver.net/freepbx/testextauth`)
+ - `EXT_AUTH_URL` (optional): external HTTP endpoint used to validate extension+password for push token reports (eg: `https://voice.nethserver.org/freepbx/testextauth`)
  - `EXT_AUTH_TIMEOUT_S` (optional): timeout in seconds for calls to `EXT_AUTH_URL` (default: `5`)
 - `LOGLEVEL` (optional): logging verbosity level - `DEBUG`, `INFO`, `WARNING`, `CRITICAL` (default: `INFO`)
 - `PUSH_TOKEN_DB_PATH` (optional): path to a database file for storing push tokens

@@ -76,7 +76,7 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 	// External auth configuration
 	extAuthURL := os.Getenv("EXT_AUTH_URL")
 	if extAuthURL == "" {
-		extAuthURL = "https://voice.gs.nethserver.net/freepbx/testextauth"
+		logger.Warn().Msg("EXT_AUTH_URL not set!")
 	}
 
 	extAuthTimeoutS := 5
