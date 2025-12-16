@@ -225,6 +225,6 @@ func (h handler) matrixAppTransaction(c echo.Context) error {
 
 	logger.Debug().Str("endpoint", "matrix_app_transaction").Str("txn_id", txnId).Str("payload", string(bodyBytes)).Msg("received application service transaction")
 
-	// As per spec, simply acknowledge with 200 OK.
-	return c.NoContent(http.StatusOK)
+	// As per spec, acknowledge with an empty JSON object and 200 OK.
+	return c.JSON(http.StatusOK, map[string]interface{}{})
 }
