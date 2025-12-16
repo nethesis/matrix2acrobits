@@ -240,6 +240,8 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 
 			matrixURL := ""
 			uploadSuccess := true
+			fileSize := 0
+
 			if acrobitsURL != "" {
 				logger.Debug().Str("content_url", acrobitsURL).Msg("downloading attachment from Acrobits")
 				fileData, err := s.downloadFile(ctx, acrobitsURL)
@@ -252,8 +254,31 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 					}
 					uploadSuccess = false
 				} else {
+					fileSize = len(fileData)
+
+					// Detect content type from file data to ensure correct display
+					detectedMime := http.DetectContentType(fileData)
+					// Strip parameters (e.g. "; charset=utf-8")
+					if idx := strings.Index(detectedMime, ";"); idx != -1 {
+						detectedMime = detectedMime[:idx]
+					}
+
+					// Use detected mime if it's an image or if original is missing/generic
+					if strings.HasPrefix(detectedMime, "image/") || mimetype == "" || mimetype == "application/octet-stream" {
+						mimetype = detectedMime
+
+						// Update msgType based on new mimetype
+						if models.IsImageContentType(mimetype) {
+							msgType = "m.image"
+						} else if models.IsVideoContentType(mimetype) {
+							msgType = "m.video"
+						} else if models.IsAudioContentType(mimetype) {
+							msgType = "m.audio"
+						}
+					}
+
 					// Upload to Matrix content repository
-					logger.Debug().Str("content_url", acrobitsURL).Int("size", len(fileData)).Msg("uploading attachment to Matrix content repository")
+					logger.Debug().Str("content_url", acrobitsURL).Int("size", fileSize).Str("mimetype", mimetype).Msg("uploading attachment to Matrix content repository")
 					uploadedURL, err := s.matrixClient.UploadMedia(ctx, senderMatrix, mimetype, fileData)
 					if err != nil {
 						logger.Warn().Err(err).Str("content_url", acrobitsURL).Msg("failed to upload attachment to Matrix, falling back to text message")
@@ -290,12 +315,17 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 				// Set info block if present
 				if info, ok := rawContent["info"].(map[string]interface{}); ok {
 					content.Info = &event.FileInfo{}
-					if mimetype, ok := info["mimetype"].(string); ok {
-						content.Info.MimeType = mimetype
-					}
-					if size, ok := info["size"].(int64); ok {
+
+					// Use the resolved mimetype
+					content.Info.MimeType = mimetype
+
+					// Use actual file size if available, otherwise fallback to info
+					if fileSize > 0 {
+						content.Info.Size = fileSize
+					} else if size, ok := info["size"].(int64); ok {
 						content.Info.Size = int(size)
 					}
+
 					// Handle thumbnail info
 					if thumbnailURL, ok := info["thumbnail_url"].(string); ok {
 						content.Info.ThumbnailURL = id.ContentURIString(thumbnailURL)
