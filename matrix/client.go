@@ -281,3 +281,26 @@ func (mc *MatrixClient) SetPusher(ctx context.Context, userID id.UserID, req *mo
 		Msg("matrix: pusher set successfully")
 	return nil
 }
+
+// ResolveMXC converts an MXC URI (mxc://server/mediaId) to a downloadable HTTP URL.
+// It uses the configured homeserver URL to construct the download link.
+func (mc *MatrixClient) ResolveMXC(mxcURI string) string {
+	if !strings.HasPrefix(mxcURI, "mxc://") {
+		return mxcURI
+	}
+
+	// Parse the MXC URI
+	// Format: mxc://<server-name>/<media-id>
+	trimmed := strings.TrimPrefix(mxcURI, "mxc://")
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) != 2 {
+		return mxcURI
+	}
+	serverName := parts[0]
+	mediaID := parts[1]
+
+	// Construct the download URL
+	// Format: /_matrix/media/v3/download/<server-name>/<media-id>
+	baseURL := strings.TrimSuffix(mc.homeserverURL, "/")
+	return fmt.Sprintf("%s/_matrix/media/v3/download/%s/%s", baseURL, serverName, mediaID)
+}

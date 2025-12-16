@@ -131,6 +131,11 @@ func FileTransferToMatrixEventContent(ftMsg *FileTransferMessage) (msgType strin
 		"url":     att.ContentURL,
 	}
 
+	// Include filename when present so clients can render proper disposition
+	if att.Filename != "" {
+		content["filename"] = att.Filename
+	}
+
 	// Add info block
 	info := map[string]interface{}{}
 	if contentType != "" {

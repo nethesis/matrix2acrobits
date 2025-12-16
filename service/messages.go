@@ -441,16 +441,94 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 			logger.Debug().Str("event_id", string(evt.ID)).Str("room_id", string(eventRoomID)).Msg("processing message event")
 
-			body := ""
+			// Extract content fields
+			var msgType string
+			var body string
+			var url string
+			var info map[string]interface{}
+			var filename string
+
+			if t, ok := evt.Content.Raw["msgtype"].(string); ok {
+				msgType = t
+			}
 			if b, ok := evt.Content.Raw["body"].(string); ok {
 				body = b
 			}
+			if fn, ok := evt.Content.Raw["filename"].(string); ok {
+				filename = fn
+			}
+			if u, ok := evt.Content.Raw["url"].(string); ok {
+				url = u
+			}
+			if i, ok := evt.Content.Raw["info"].(map[string]interface{}); ok {
+				info = i
+			}
+
 			sms := models.SMS{
 				SMSID:       string(evt.ID),
 				SendingDate: time.UnixMilli(evt.Timestamp).UTC().Format(time.RFC3339),
-				SMSText:     body,
-				ContentType: "text/plain",
 				StreamID:    string(roomID),
+			}
+
+			// Check if it's a media message
+			if msgType == "m.image" || msgType == "m.video" || msgType == "m.audio" || msgType == "m.file" {
+				// Convert to Acrobits file transfer format
+				// Resolve MXC URI to HTTP URL
+				httpURL := s.matrixClient.ResolveMXC(url)
+				if httpURL == "" {
+					logger.Warn().Str("event_id", string(evt.ID)).Msg("media event missing URL, falling back to text")
+					sms.SMSText = body
+					sms.ContentType = "text/plain"
+				} else {
+					// Extract metadata
+					mimetype := ""
+					var size int64
+					thumbnailURL := ""
+					thumbnailMime := ""
+
+					if info != nil {
+						if m, ok := info["mimetype"].(string); ok {
+							mimetype = m
+						}
+						if sVal, ok := info["size"].(float64); ok { // JSON numbers are float64
+							size = int64(sVal)
+						} else if sVal, ok := info["size"].(int64); ok {
+							size = sVal
+						} else if sVal, ok := info["size"].(int); ok {
+							size = int64(sVal)
+						}
+						if tURL, ok := info["thumbnail_url"].(string); ok {
+							thumbnailURL = s.matrixClient.ResolveMXC(tURL)
+						}
+						if tInfo, ok := info["thumbnail_info"].(map[string]interface{}); ok {
+							if tm, ok := tInfo["mimetype"].(string); ok {
+								thumbnailMime = tm
+							}
+						}
+					}
+
+					// Convert to JSON
+					// Prefer explicit filename if present; fall back to body
+					effectiveFilename := filename
+					if effectiveFilename == "" {
+						effectiveFilename = body
+					}
+
+					ftJSON, err := models.MatrixMediaToFileTransfer(msgType, body, httpURL, mimetype, effectiveFilename, size, thumbnailURL, thumbnailMime)
+					if err != nil {
+						logger.Warn().Err(err).Msg("failed to convert matrix media to file transfer")
+						// Fallback to text
+						sms.SMSText = body
+						sms.ContentType = "text/plain"
+					} else {
+						sms.SMSText = ftJSON
+						sms.ContentType = models.FileTransferContentType
+					}
+				}
+			} else {
+				// Regular text message
+				sms.SMSText = body
+				sms.ContentType = "text/plain"
 			}
 
 			// Determine if I sent the message
