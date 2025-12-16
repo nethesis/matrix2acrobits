@@ -210,6 +210,40 @@ func (mc *MatrixClient) ListJoinedRooms(ctx context.Context, userID id.UserID) (
 	return resp.JoinedRooms, nil
 }
 
+// UploadMedia uploads media to the Matrix content repository and returns the MXC URI.
+// This follows the Matrix spec: https://spec.matrix.org/v1.2/client-server-api/#content-repository
+// The returned URI can be used in message events via the `url` field.
+func (mc *MatrixClient) UploadMedia(ctx context.Context, userID id.UserID, contentType string, data []byte) (id.ContentURIString, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	logger.Debug().
+		Str("user_id", string(userID)).
+		Str("content_type", contentType).
+		Int("size", len(data)).
+		Msg("matrix: uploading media to content repository")
+
+	mc.cli.UserID = userID
+
+	resp, err := mc.cli.UploadBytes(ctx, data, contentType)
+	if err != nil {
+		logger.Error().
+			Str("user_id", string(userID)).
+			Str("content_type", contentType).
+			Err(err).
+			Msg("matrix: failed to upload media")
+		return "", fmt.Errorf("upload media: %w", err)
+	}
+
+	contentURI := resp.ContentURI.CUString()
+	logger.Debug().
+		Str("user_id", string(userID)).
+		Str("content_uri", string(contentURI)).
+		Msg("matrix: media uploaded successfully")
+
+	return contentURI, nil
+}
+
 // SetPusher registers or updates a push gateway for the specified user.
 // This is used to configure Matrix to send push notifications to the proxy's /_matrix/push/v1/notify endpoint.
 func (mc *MatrixClient) SetPusher(ctx context.Context, userID id.UserID, req *models.SetPusherRequest) error {

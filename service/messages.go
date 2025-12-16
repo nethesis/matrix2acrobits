@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -216,51 +218,98 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 				Body:    ftMsg.Body,
 			}
 		} else {
-			// Convert to Matrix event content
+			// Download attachments from Acrobits and upload to Matrix content repository
 			msgType, rawContent, err := models.FileTransferToMatrixEventContent(ftMsg)
 			if err != nil {
 				logger.Warn().Err(err).Msg("failed to convert file transfer to Matrix format")
 				return nil, fmt.Errorf("failed to convert file transfer: %w", err)
 			}
 
-			// Build the Matrix event content
-			content = &event.MessageEventContent{
-				MsgType: event.MessageType(msgType),
-				Body:    rawContent["body"].(string),
-			}
-
-			// Set the URL for media messages
+			// Download and upload the main attachment
+			acrobitsURL := ""
 			if url, ok := rawContent["url"].(string); ok {
-				content.URL = id.ContentURIString(url)
+				acrobitsURL = url
 			}
 
-			// Set the filename if present
-			if filename, ok := rawContent["filename"].(string); ok {
-				content.FileName = filename
-			}
-
-			// Set info block if present
+			mimetype := ""
 			if info, ok := rawContent["info"].(map[string]interface{}); ok {
-				content.Info = &event.FileInfo{}
-				if mimetype, ok := info["mimetype"].(string); ok {
-					content.Info.MimeType = mimetype
+				if mt, ok := info["mimetype"].(string); ok {
+					mimetype = mt
 				}
-				if size, ok := info["size"].(int64); ok {
-					content.Info.Size = int(size)
-				}
-				// Handle thumbnail info
-				if thumbnailURL, ok := info["thumbnail_url"].(string); ok {
-					content.Info.ThumbnailURL = id.ContentURIString(thumbnailURL)
-				}
-				if thumbnailInfo, ok := info["thumbnail_info"].(map[string]interface{}); ok {
-					content.Info.ThumbnailInfo = &event.FileInfo{}
-					if tm, ok := thumbnailInfo["mimetype"].(string); ok {
-						content.Info.ThumbnailInfo.MimeType = tm
+			}
+
+			matrixURL := ""
+			uploadSuccess := true
+			if acrobitsURL != "" {
+				logger.Debug().Str("content_url", acrobitsURL).Msg("downloading attachment from Acrobits")
+				fileData, err := s.downloadFile(ctx, acrobitsURL)
+				if err != nil {
+					logger.Warn().Err(err).Str("content_url", acrobitsURL).Msg("failed to download attachment, falling back to text message")
+					// Fallback: send as text message only
+					content = &event.MessageEventContent{
+						MsgType: event.MsgText,
+						Body:    ftMsg.Body,
+					}
+					uploadSuccess = false
+				} else {
+					// Upload to Matrix content repository
+					logger.Debug().Str("content_url", acrobitsURL).Int("size", len(fileData)).Msg("uploading attachment to Matrix content repository")
+					uploadedURL, err := s.matrixClient.UploadMedia(ctx, senderMatrix, mimetype, fileData)
+					if err != nil {
+						logger.Warn().Err(err).Str("content_url", acrobitsURL).Msg("failed to upload attachment to Matrix, falling back to text message")
+						// Fallback: send as text message only
+						content = &event.MessageEventContent{
+							MsgType: event.MsgText,
+							Body:    ftMsg.Body,
+						}
+						uploadSuccess = false
+					} else {
+						matrixURL = string(uploadedURL)
+						logger.Debug().Str("matrix_url", matrixURL).Str("content_url", acrobitsURL).Msg("attachment uploaded to Matrix content repository")
 					}
 				}
 			}
 
-			logger.Debug().Str("msg_type", msgType).Str("url", string(content.URL)).Msg("converted file transfer to Matrix media message")
+			if uploadSuccess {
+				// Build the Matrix event content
+				content = &event.MessageEventContent{
+					MsgType: event.MessageType(msgType),
+					Body:    rawContent["body"].(string),
+				}
+
+				// Set the URL for media messages (use uploaded Matrix URL)
+				if matrixURL != "" {
+					content.URL = id.ContentURIString(matrixURL)
+				}
+
+				// Set the filename if present
+				if filename, ok := rawContent["filename"].(string); ok {
+					content.FileName = filename
+				}
+
+				// Set info block if present
+				if info, ok := rawContent["info"].(map[string]interface{}); ok {
+					content.Info = &event.FileInfo{}
+					if mimetype, ok := info["mimetype"].(string); ok {
+						content.Info.MimeType = mimetype
+					}
+					if size, ok := info["size"].(int64); ok {
+						content.Info.Size = int(size)
+					}
+					// Handle thumbnail info
+					if thumbnailURL, ok := info["thumbnail_url"].(string); ok {
+						content.Info.ThumbnailURL = id.ContentURIString(thumbnailURL)
+					}
+					if thumbnailInfo, ok := info["thumbnail_info"].(map[string]interface{}); ok {
+						content.Info.ThumbnailInfo = &event.FileInfo{}
+						if tm, ok := thumbnailInfo["mimetype"].(string); ok {
+							content.Info.ThumbnailInfo.MimeType = tm
+						}
+					}
+				}
+
+				logger.Debug().Str("msg_type", msgType).Str("matrix_url", matrixURL).Msg("converted file transfer to Matrix media message")
+			}
 		}
 	} else {
 		// Regular text message
@@ -886,4 +935,42 @@ func (s *MessageService) clearBatchToken(userID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.batchTokens, userID)
+}
+
+// downloadFile downloads a file from the given URL with a context timeout.
+// Returns the file contents as bytes, or an error if the download fails.
+func (s *MessageService) downloadFile(ctx context.Context, url string) ([]byte, error) {
+	// Create a new request with context
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	// Execute the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Read the response body with a reasonable size limit (100MB)
+	const maxSize = 100 * 1024 * 1024 // 100MB
+	limitedReader := io.LimitReader(resp.Body, maxSize+1)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	if len(data) > maxSize {
+		return nil, fmt.Errorf("file too large: %d bytes exceeds limit of %d bytes", len(data), maxSize)
+	}
+
+	logger.Debug().Str("url", url).Int("size", len(data)).Int("status", resp.StatusCode).Msg("file downloaded successfully")
+	return data, nil
 }
