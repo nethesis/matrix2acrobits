@@ -63,6 +63,11 @@ paths:
         If a phone number is provided and a mapping exists, the message is sent on behalf of the mapped Matrix user.
         If a phone number is provided but no mapping exists, the phone number is used as the sender ID.
 
+        **File Attachments:**
+        To send files, set `content_type` to `application/x-acro-filetransfer+json` and provide the 
+        file transfer JSON in the `body` field. See the FileTransferMessage schema for the format.
+        Matrix media URLs (mxc://) must already be uploaded to the Matrix content repository.
+
         Authentication is handled by the Application Service backend; the `password` field is ignored.
       requestBody:
         required: true
@@ -87,10 +92,17 @@ paths:
                   description: Recipient Matrix ID, Alias, or mapped phone number.
                 body:
                   type: string
-                  description: The message content.
+                  description: |
+                    The message content. For plain text messages, this is the text body.
+                    For file attachments (when content_type is application/x-acro-filetransfer+json),
+                    this contains the JSON-encoded FileTransferMessage.
                 content_type:
                   type: string
                   default: text/plain
+                  description: |
+                    MIME content type. Supported values:
+                    - `text/plain` (default): Plain text message
+                    - `application/x-acro-filetransfer+json`: File attachment message
                 disposition_notification:
                   type: string
                   description: Opaque string for read receipts.
@@ -279,10 +291,16 @@ components:
           description: Recipient identifier (phone number or user name). Only present in sent messages.
         sms_text:
           type: string
-          description: Message body (UTF-8 encoded).
+          description: |
+            Message body (UTF-8 encoded). For plain text messages, this is the text content.
+            For file attachments (when content_type is application/x-acro-filetransfer+json),
+            this contains a JSON-encoded FileTransferMessage.
         content_type:
           type: string
-          description: MIME content-type. Defaults to text/plain if omitted.
+          description: |
+            MIME content-type. Values:
+            - `text/plain` (default): Plain text message, sms_text contains the text
+            - `application/x-acro-filetransfer+json`: File attachment, sms_text contains FileTransferMessage JSON
         disposition_notification:
           type: string
           description: Opaque string from Send Message request. Can be omitted if empty.
@@ -292,6 +310,66 @@ components:
         stream_id:
           type: string
           description: Identifier for the conversation stream (Room ID or identifier).
+    FileTransferMessage:
+      type: object
+      description: |
+        Acrobits file transfer message format used when content_type is application/x-acro-filetransfer+json.
+        See https://doc.acrobits.net/api/client/x-acro-filetransfer.html
+      properties:
+        body:
+          type: string
+          description: Optional text message applying to the attachment(s).
+        attachments:
+          type: array
+          description: Array of file attachments.
+          items:
+            $ref: '#/components/schemas/Attachment'
+      required:
+        - attachments
+    Attachment:
+      type: object
+      description: A single file attachment in the Acrobits file transfer format.
+      properties:
+        content-type:
+          type: string
+          description: MIME type of the file. If not present, image/jpeg is assumed.
+          default: image/jpeg
+        content-url:
+          type: string
+          description: URL to download the file content (Matrix mxc:// URL or HTTP URL).
+        content-size:
+          type: integer
+          format: int64
+          description: Size of the file in bytes. Used to decide download behavior.
+        filename:
+          type: string
+          description: Original filename on the sending device.
+        description:
+          type: string
+          description: Text description for the attachment (not widely used).
+        encryption-key:
+          type: string
+          description: Hex-encoded AES128/192/256 CTR key for decryption. If present, content is encrypted.
+        hash:
+          type: string
+          description: CRC32 digest of the decrypted binary data for integrity verification.
+        preview:
+          $ref: '#/components/schemas/AttachmentPreview'
+      required:
+        - content-url
+    AttachmentPreview:
+      type: object
+      description: Low quality preview image for an attachment.
+      properties:
+        content-type:
+          type: string
+          description: MIME type of the preview. If not present, image/jpeg is assumed.
+          default: image/jpeg
+        content:
+          type: string
+          description: BASE64 encoded preview image data, or URL to thumbnail.
+      required:
+        - content
     FetchMessagesResponse:
       type: object
       description: Response from the fetch_messages endpoint following Acrobits Modern API specification.

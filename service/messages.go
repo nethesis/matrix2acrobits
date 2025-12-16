@@ -195,9 +195,79 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		return nil, fmt.Errorf("send message: %w", err)
 	}
 
-	content := &event.MessageEventContent{
-		MsgType: event.MsgText,
-		Body:    req.Body,
+	var content *event.MessageEventContent
+
+	// Check if this is a file transfer message
+	if models.IsFileTransferContentType(req.ContentType) {
+		logger.Debug().Str("content_type", req.ContentType).Msg("processing file transfer message")
+
+		// Parse the file transfer JSON from the body
+		ftMsg, err := models.ParseFileTransferMessage(req.Body)
+		if err != nil {
+			logger.Warn().Err(err).Str("body", req.Body).Msg("failed to parse file transfer message")
+			return nil, fmt.Errorf("invalid file transfer message: %w", err)
+		}
+
+		// Check if attachments are empty - if so, treat as text message
+		if len(ftMsg.Attachments) == 0 {
+			logger.Debug().Msg("file transfer message has empty attachments, sending as text message")
+			content = &event.MessageEventContent{
+				MsgType: event.MsgText,
+				Body:    ftMsg.Body,
+			}
+		} else {
+			// Convert to Matrix event content
+			msgType, rawContent, err := models.FileTransferToMatrixEventContent(ftMsg)
+			if err != nil {
+				logger.Warn().Err(err).Msg("failed to convert file transfer to Matrix format")
+				return nil, fmt.Errorf("failed to convert file transfer: %w", err)
+			}
+
+			// Build the Matrix event content
+			content = &event.MessageEventContent{
+				MsgType: event.MessageType(msgType),
+				Body:    rawContent["body"].(string),
+			}
+
+			// Set the URL for media messages
+			if url, ok := rawContent["url"].(string); ok {
+				content.URL = id.ContentURIString(url)
+			}
+
+			// Set the filename if present
+			if filename, ok := rawContent["filename"].(string); ok {
+				content.FileName = filename
+			}
+
+			// Set info block if present
+			if info, ok := rawContent["info"].(map[string]interface{}); ok {
+				content.Info = &event.FileInfo{}
+				if mimetype, ok := info["mimetype"].(string); ok {
+					content.Info.MimeType = mimetype
+				}
+				if size, ok := info["size"].(int64); ok {
+					content.Info.Size = int(size)
+				}
+				// Handle thumbnail info
+				if thumbnailURL, ok := info["thumbnail_url"].(string); ok {
+					content.Info.ThumbnailURL = id.ContentURIString(thumbnailURL)
+				}
+				if thumbnailInfo, ok := info["thumbnail_info"].(map[string]interface{}); ok {
+					content.Info.ThumbnailInfo = &event.FileInfo{}
+					if tm, ok := thumbnailInfo["mimetype"].(string); ok {
+						content.Info.ThumbnailInfo.MimeType = tm
+					}
+				}
+			}
+
+			logger.Debug().Str("msg_type", msgType).Str("url", string(content.URL)).Msg("converted file transfer to Matrix media message")
+		}
+	} else {
+		// Regular text message
+		content = &event.MessageEventContent{
+			MsgType: event.MsgText,
+			Body:    req.Body,
+		}
 	}
 
 	resp, err := s.matrixClient.SendMessage(ctx, senderMatrix, roomID, content)
