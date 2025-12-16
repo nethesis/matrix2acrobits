@@ -31,5 +31,5 @@ cd test
 Notes
 -----
 - `test.sh` uses `podman run` to start the `matrixdotorg/synapse:latest` container on port `8008`.
-- `test.sh` expects `test/test.env` to provide `SUPER_ADMIN_TOKEN`, `USER1`, `USER1_PASSWORD`, `USER2`, `USER2_PASSWORD`.
+- `test.sh` expects `test/test.env` to provide `MATRIX_AS_TOKEN`, `USER1`, `USER1_PASSWORD`, `USER2`, `USER2_PASSWORD`.
  - `test/homeserver.yaml` has been simplified and no longer contains OIDC/Dex configuration; it is standalone for local testing.
