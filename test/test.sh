@@ -220,7 +220,6 @@ run() {
     echo "podman not found in PATH; please start Synapse manually if you want integration tests to run against a local server"
   fi
 
-  export EXT_AUTH_URL=http://localhost:18081
   export RUN_INTEGRATION_TESTS=1
   echo "Running integration tests (RUN_INTEGRATION_TESTS=1)"
   # Run all tests with coverage first

@@ -45,9 +45,6 @@ type Config struct {
 	ExtAuthURL      string
 	ExtAuthTimeoutS int
 	ExtAuthTimeout  time.Duration
-
-	// Mapping file
-	MappingFile string
 }
 
 // NewConfig loads all configuration from environment variables with validation
@@ -157,14 +154,6 @@ func NewConfig() (*Config, error) {
 		logger.Debug().Int("EXT_AUTH_TIMEOUT_S", cfg.ExtAuthTimeoutS).Msg("using default external auth timeout")
 	}
 	cfg.ExtAuthTimeout = time.Duration(cfg.ExtAuthTimeoutS) * time.Second
-
-	// Load mapping file configuration
-	cfg.MappingFile = os.Getenv("MAPPING_FILE")
-	if cfg.MappingFile != "" {
-		logger.Debug().Str("MAPPING_FILE", cfg.MappingFile).Msg("mapping file path loaded from environment")
-	} else {
-		logger.Debug().Msg("MAPPING_FILE not set - no mapping file will be loaded at startup")
-	}
 
 	logger.Debug().Msg("configuration loading completed successfully")
 

@@ -60,13 +60,6 @@ func main() {
 	pushSvc := service.NewPushService(pushTokenDB)
 	api.RegisterRoutes(e, svc, pushSvc, cfg.MatrixAsToken, pushTokenDB)
 
-	// Load mappings from file if MAPPING_FILE env var is set
-	if cfg.MappingFile != "" {
-		if err := svc.LoadMappingsFromFile(cfg.MappingFile); err != nil {
-			logger.Error().Err(err).Str("file", cfg.MappingFile).Msg("failed to load mappings from file")
-		}
-	}
-
 	logger.Info().Str("port", cfg.ProxyPort).Msg("starting server")
 	if err := e.Start(":" + cfg.ProxyPort); err != nil {
 		logger.Fatal().Err(err).Msg("server stopped")

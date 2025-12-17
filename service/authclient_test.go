@@ -2,175 +2,260 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/nethesis/matrix2acrobits/models"
 	"github.com/stretchr/testify/require"
 )
 
-func TestHTTPAuthClient_Non200Response(t *testing.T) {
+// createTestJWT creates a JWT token with the specified claims for testing
+func createTestJWT(nethvoiceCTIChat bool) string {
+	claims := jwt.MapClaims{
+		"nethvoice_cti.chat": nethvoiceCTIChat,
+		"exp":                time.Now().Add(time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// We sign with a key but don't verify in tests since our code doesn't verify signature
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+	return tokenString
+}
+
+func TestHTTPAuthClient_SuccessfulTwoStepAuth(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("server error"))
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.LoginResponse{Token: createTestJWT(true)}
+			json.NewEncoder(w).Encode(resp)
+		} else if r.URL.Path == "/api/chat" && r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.ChatResponse{
+				Matrix: models.ChatMatrixConfig{
+					BaseURL:     "https://matrix.example.com",
+					AcrobitsURL: "https://matrix.example.com/m2a",
+				},
+				Users: []models.ChatUser{
+					{
+						UserName:      "giacomo",
+						MainExtension: "201",
+						SubExtensions: []string{"91201", "92201"},
+					},
+					{
+						UserName:      "mario",
+						MainExtension: "202",
+						SubExtensions: []string{"91202"},
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
 	}))
 	defer ts.Close()
 
 	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
-	_, ok, err := c.Validate(context.TODO(), "123", "secret", "example.com")
+	mappings, ok, err := c.Validate(context.TODO(), "giacomo@example.com", "secret", "example.com")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, mappings, 2)
+
+	// Find giacomo
+	var giacomoMapping *models.MappingRequest
+	for _, m := range mappings {
+		if m.Number == 201 {
+			giacomoMapping = m
+			break
+		}
+	}
+	require.NotNil(t, giacomoMapping)
+	require.Equal(t, 201, giacomoMapping.Number)
+	require.Equal(t, "@giacomo:example.com", giacomoMapping.MatrixID)
+	require.Equal(t, []int{91201, 92201}, giacomoMapping.SubNumbers)
+}
+
+func TestHTTPAuthClient_PlainUsername(t *testing.T) {
+	// Tests that the client correctly sends the plain username (no extraction needed)
+	// Any username extraction should be done by the caller before calling Validate
+	loginCalled := false
+	var capturedUsername string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			loginCalled = true
+			var req models.LoginRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			capturedUsername = req.Username
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.LoginResponse{Token: createTestJWT(true)}
+			json.NewEncoder(w).Encode(resp)
+		} else if r.URL.Path == "/api/chat" && r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.ChatResponse{
+				Users: []models.ChatUser{
+					{UserName: "giacomo", MainExtension: "201", SubExtensions: []string{}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer ts.Close()
+
+	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
+	// Pass the plain username directly - no extraction happens in Validate
+	_, ok, err := c.Validate(context.TODO(), "giacomo", "secret", "example.com")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, loginCalled)
+	require.Equal(t, "giacomo", capturedUsername)
+}
+
+func TestHTTPAuthClient_MissingChatClaim(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			// JWT without nethvoice_cti.chat claim
+			resp := models.LoginResponse{Token: createTestJWT(false)}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer ts.Close()
+
+	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
+	_, ok, err := c.Validate(context.TODO(), "user@example.com", "secret", "example.com")
 	require.Error(t, err)
 	require.False(t, ok)
 }
 
-func TestHTTPAuthClient_InvalidMainExtension(t *testing.T) {
+func TestHTTPAuthClient_LoginFails(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		// Return an array with one valid and one invalid entry
-		_, _ = w.Write([]byte(`[
-			{"main_extension":"201","sub_extensions":[],"user_name":"giacomo"},
-			{"main_extension":"not-a-number","sub_extensions":[],"user_name":"alice"}
-		]`))
-	}))
-	defer ts.Close()
-
-	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
-	// Request the invalid extension - the client returns parsed mappings from the
-	// response (it does not filter by the requested extension). Expect no error
-	// and the valid mapping to be present.
-	mappings, ok, err := c.Validate(context.TODO(), "not-a-number", "secret", "example.com")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, mappings, 1)
-	require.Equal(t, 201, mappings[0].Number)
-}
-
-func TestHTTPAuthClient_MissingHomeserverHost(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		// The server returns entries with localpart user_name (no @domain)
-		// When we have no homeserverHost, we should skip these
-		_, _ = w.Write([]byte(`[{"main_extension":"1","sub_extensions":[],"user_name":"alice"}]`))
-	}))
-	defer ts.Close()
-
-	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
-	// Request extension 1 with no homeserver host configured. The client will
-	// still return parsed mappings but the Matrix ID will include an empty
-	// homeserver (trailing colon).
-	mappings, ok, err := c.Validate(context.TODO(), "1", "secret", "")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, mappings, 1)
-	require.Equal(t, "@alice:", mappings[0].MatrixID)
-}
-
-func TestHTTPAuthClient_MatchingExtensionFromArray(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[
-			{"main_extension":"201","sub_extensions":["91201","92201"],"user_name":"giacomo"},
-			{"main_extension":"202","sub_extensions":["91202"],"user_name":"mario"}
-		]`))
-	}))
-	defer ts.Close()
-
-	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
-	mappings, ok, err := c.Validate(context.TODO(), "202", "secret", "example.com")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, mappings, 2)
-
-	// Find the mario entry (202)
-	var marioMapping *models.MappingRequest
-	for _, m := range mappings {
-		if m.Number == 202 {
-			marioMapping = m
-			break
+		if r.URL.Path == "/api/login" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("invalid credentials"))
 		}
-	}
-	require.NotNil(t, marioMapping)
-	require.Equal(t, 202, marioMapping.Number)
-	require.Equal(t, "@mario:example.com", marioMapping.MatrixID)
-	require.Equal(t, []int{91202}, marioMapping.SubNumbers)
-}
-
-func TestHTTPAuthClient_ExtensionNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[
-			{"main_extension":"201","sub_extensions":["91201","92201"],"user_name":"giacomo"},
-			{"main_extension":"202","sub_extensions":["91202"],"user_name":"mario"}
-		]`))
 	}))
 	defer ts.Close()
 
 	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
-	// Request a non-existing extension - the client still returns all parsed
-	// mappings from the auth response when the HTTP call succeeds.
-	mappings, ok, err := c.Validate(context.TODO(), "999", "secret", "example.com")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, mappings, 2)
+	_, ok, err := c.Validate(context.TODO(), "user@example.com", "wrongsecret", "example.com")
+	require.Error(t, err)
+	require.False(t, ok)
 }
 
-func TestHTTPAuthClient_CacheHitReturnsEmptyMappings(t *testing.T) {
+func TestHTTPAuthClient_ChatFails(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.LoginResponse{Token: createTestJWT(true)}
+			json.NewEncoder(w).Encode(resp)
+		} else if r.URL.Path == "/api/chat" && r.Method == "GET" {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("server error"))
+		}
+	}))
+	defer ts.Close()
+
+	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
+	_, ok, err := c.Validate(context.TODO(), "user@example.com", "secret", "example.com")
+	require.Error(t, err)
+	require.False(t, ok)
+}
+
+func TestHTTPAuthClient_CacheHit(t *testing.T) {
 	callCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[
-			{"main_extension":"201","sub_extensions":["91201"],"user_name":"giacomo"},
-			{"main_extension":"202","sub_extensions":["91202"],"user_name":"mario"}
-		]`))
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.LoginResponse{Token: createTestJWT(true)}
+			json.NewEncoder(w).Encode(resp)
+		} else if r.URL.Path == "/api/chat" && r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.ChatResponse{
+				Users: []models.ChatUser{
+					{UserName: "giacomo", MainExtension: "201", SubExtensions: []string{}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
 	}))
 	defer ts.Close()
 
 	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 100*time.Millisecond)
 
-	// First call should make request and return all mappings
-	mappings1, ok1, err1 := c.Validate(context.TODO(), "202", "secret", "example.com")
+	// First call should make requests
+	mappings1, ok1, err1 := c.Validate(context.TODO(), "giacomo@example.com", "secret", "example.com")
 	require.NoError(t, err1)
 	require.True(t, ok1)
-	require.Len(t, mappings1, 2)
-	require.Equal(t, 1, callCount)
+	require.Len(t, mappings1, 1)
+	require.Equal(t, 2, callCount) // 1 login + 1 chat
 
 	// Second call should use cache and return empty mappings
-	mappings2, ok2, err2 := c.Validate(context.TODO(), "202", "secret", "example.com")
+	mappings2, ok2, err2 := c.Validate(context.TODO(), "giacomo@example.com", "secret", "example.com")
 	require.NoError(t, err2)
 	require.True(t, ok2)
 	require.Len(t, mappings2, 0)   // Cache returns empty array
-	require.Equal(t, 1, callCount) // No additional call
+	require.Equal(t, 2, callCount) // No additional calls
 }
 
-func TestHTTPAuthClient_CacheFailedAuth(t *testing.T) {
-	callCount := 0
+func TestHTTPAuthClient_InvalidMainExtension(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte("unauthorized"))
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.LoginResponse{Token: createTestJWT(true)}
+			json.NewEncoder(w).Encode(resp)
+		} else if r.URL.Path == "/api/chat" && r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.ChatResponse{
+				Users: []models.ChatUser{
+					{UserName: "giacomo", MainExtension: "201", SubExtensions: []string{}},
+					{UserName: "alice", MainExtension: "invalid", SubExtensions: []string{}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
 	}))
 	defer ts.Close()
 
-	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 100*time.Millisecond)
+	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
+	mappings, ok, err := c.Validate(context.TODO(), "giacomo@example.com", "secret", "example.com")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, mappings, 1) // Only valid mapping
+	require.Equal(t, 201, mappings[0].Number)
+}
 
-	// First call should make request and fail
-	mappings1, ok1, err1 := c.Validate(context.TODO(), "999", "wrongsecret", "example.com")
-	require.Error(t, err1)
-	require.False(t, ok1)
-	require.Empty(t, mappings1)
-	require.Equal(t, 1, callCount)
+func TestHTTPAuthClient_EmptyUsersList(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/login" && r.Method == "POST" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.LoginResponse{Token: createTestJWT(true)}
+			json.NewEncoder(w).Encode(resp)
+		} else if r.URL.Path == "/api/chat" && r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := models.ChatResponse{Users: []models.ChatUser{}}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer ts.Close()
 
-	// Second call should NOT use cache (failed auth not cached) and make new request
-	mappings2, ok2, err2 := c.Validate(context.TODO(), "999", "wrongsecret", "example.com")
-	require.Error(t, err2)
-	require.False(t, ok2)
-	require.Empty(t, mappings2)
-	require.Equal(t, 2, callCount) // Additional call made
+	c := NewHTTPAuthClient(ts.URL, 2*time.Second, 0)
+	mappings, ok, err := c.Validate(context.TODO(), "user@example.com", "secret", "example.com")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, mappings, 0)
 }

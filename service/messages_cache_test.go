@@ -1,12 +1,24 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"maunium.net/go/mautrix/id"
 )
+
+// setMapping is a test helper to directly insert a mapping into the service's internal store.
+func setMappingCache(t *testing.T, svc *MessageService, entry mappingEntry) {
+	t.Helper()
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	entry.UpdatedAt = time.Now()
+	// Only store by number for tests; the actual SaveMapping stores both
+	svc.mappings[fmt.Sprintf("%d", entry.Number)] = entry
+}
 
 // TestMessageServiceCacheInitialization tests that MessageService initializes with caches.
 func TestMessageServiceCacheInitialization(t *testing.T) {
@@ -101,7 +113,7 @@ func TestResolveRoomIDToOtherIdentifierCacheBehavior(t *testing.T) {
 	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Add a mapping so the resolution can complete
-	svc.setMapping(mappingEntry{
+	setMappingCache(t, svc, mappingEntry{
 		Number:   201,
 		MatrixID: "@user2:server",
 	})
@@ -113,7 +125,7 @@ func TestResolveRoomIDToOtherIdentifierCacheBehavior(t *testing.T) {
 	svc.roomAliasesCache.Set(string(roomID), []string{"user1|user2"})
 
 	// Call resolveRoomIDToOtherIdentifier
-	result := svc.resolveRoomIDToOtherIdentifier(nil, roomID, myMatrixID)
+	result := svc.resolveRoomIDToOtherIdentifier(context.TODO(), roomID, myMatrixID)
 
 	// Should resolve to 201 (the mapped number for @user2:server)
 	assert.Equal(t, "201", result)
@@ -124,7 +136,7 @@ func TestResolveRoomIDToOtherIdentifierCacheBehavior(t *testing.T) {
 	assert.Equal(t, "201", cached)
 
 	// Call again - should use participant cache
-	result2 := svc.resolveRoomIDToOtherIdentifier(nil, roomID, myMatrixID)
+	result2 := svc.resolveRoomIDToOtherIdentifier(context.TODO(), roomID, myMatrixID)
 	assert.Equal(t, "201", result2)
 }
 
@@ -133,11 +145,11 @@ func TestParticipantCacheKeyUniquenessForDifferentViewers(t *testing.T) {
 	svc := NewMessageService(nil, nil, NewTestConfig())
 
 	// Add mappings for both users
-	svc.setMapping(mappingEntry{
+	setMappingCache(t, svc, mappingEntry{
 		Number:   201,
 		MatrixID: "@user2:server",
 	})
-	svc.setMapping(mappingEntry{
+	setMappingCache(t, svc, mappingEntry{
 		Number:   102,
 		MatrixID: "@user1:server",
 	})
@@ -150,11 +162,11 @@ func TestParticipantCacheKeyUniquenessForDifferentViewers(t *testing.T) {
 	svc.roomAliasesCache.Set(string(roomID), []string{"user1|user2"})
 
 	// Call from user1 perspective
-	result1 := svc.resolveRoomIDToOtherIdentifier(nil, roomID, user1)
+	result1 := svc.resolveRoomIDToOtherIdentifier(context.TODO(), roomID, user1)
 	assert.Equal(t, "201", result1) // Should see user2
 
 	// Call from user2 perspective
-	result2 := svc.resolveRoomIDToOtherIdentifier(nil, roomID, user2)
+	result2 := svc.resolveRoomIDToOtherIdentifier(context.TODO(), roomID, user2)
 	assert.Equal(t, "102", result2) // Should see user1
 
 	// Verify both are cached separately

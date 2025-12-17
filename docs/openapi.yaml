@@ -13,7 +13,9 @@ paths:
       operationId: fetchMessages
       description: |
         Checks for new incoming messages by performing a Matrix /sync on behalf of the user.
-        Authentication is handled by the Application Service backend; the `password` field is ignored.
+        Authentication is performed against an external authentication service (2-step flow):
+        1. POST /api/login with username and password to get JWT token
+        2. GET /api/chat?users=1 with Bearer token to fetch user mappings and verify chat capability
       requestBody:
         required: true
         content:
@@ -26,10 +28,10 @@ paths:
               properties:
                 username:
                   type: string
-                  description: The full Matrix ID (e.g., @user:server.com) of the user to impersonate.
+                  description: The extension/username (format can be user@domain), which is sent to the external auth service.
                 password:
                   type: string
-                  description: Password used to authenticate the extension/user via the external auth service.
+                  description: Password used to authenticate via the external auth service.
                 last_id:
                   type: string
                   description: The 'since' token from the last sync.
@@ -58,12 +60,14 @@ paths:
 
         The `from` field can be:
         - A full Matrix ID (e.g., @user:server.com) - used directly
-        - A phone number (e.g., +1234567890) - resolved to Matrix ID via -to-Matrix mapping if available
+        - A phone number (e.g., +1234567890) - resolved to Matrix ID via phone-to-Matrix mapping if available
 
         If a phone number is provided and a mapping exists, the message is sent on behalf of the mapped Matrix user.
         If a phone number is provided but no mapping exists, the phone number is used as the sender ID.
 
-        Authentication is handled by the Application Service backend; the `password` field is ignored.
+        Authentication is performed against an external authentication service (2-step flow):
+        1. POST /api/login with username and password to get JWT token
+        2. GET /api/chat?users=1 with Bearer token to fetch user mappings and verify chat capability
       requestBody:
         required: true
         content:
@@ -118,6 +122,10 @@ paths:
         Receives and stores device push tokens from Acrobits clients.
         The tokens are persisted in a SQLite database for later use in push notification delivery.
         This endpoint follows the Acrobits Push Token Reporter API specification for POST JSON requests.
+        
+        Authentication is performed against an external authentication service (2-step flow):
+        1. POST /api/login with username and password to get JWT token
+        2. GET /api/chat?users=1 with Bearer token to fetch user mappings and verify chat capability
       requestBody:
         required: true
         content:

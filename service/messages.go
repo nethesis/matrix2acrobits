@@ -2,10 +2,8 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +34,7 @@ type MessageService struct {
 	// External auth configuration
 	extAuthURL     string
 	extAuthTimeout time.Duration
-	authClient     AuthClient
+	authClient     *HTTPAuthClient
 	// Homeserver host used to build Matrix IDs from auth response
 	homeserverHost string
 
@@ -87,11 +85,11 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 	}
 }
 
-// validateAndPersistMappings validates credentials with the external auth service
+// authenticateAndPersistMappings validates credentials with the external auth service
 // and persists all returned mappings to the local store.
 // Returns ErrAuthentication if validation fails.
-func (s *MessageService) validateAndPersistMappings(ctx context.Context, username, password string) error {
-	mappings, ok, err := s.authClient.Validate(ctx, username, strings.TrimSpace(password), s.homeserverHost)
+func (s *MessageService) authenticateAndPersistMappings(ctx context.Context, username, password string) error {
+	mappings, ok, err := s.authClient.Validate(ctx, username, password, s.homeserverHost)
 	if err != nil {
 		if !ok {
 			logger.Warn().Str("username", username).Msg("external auth failed: unauthorized")
@@ -118,30 +116,8 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 	// Debug full request
 	logger.Debug().Interface("request", req).Msg("send message request received")
 
-	senderStr := strings.TrimSpace(req.From)
-	if senderStr == "" {
-		logger.Warn().Msg("send message: empty sender")
-		return nil, ErrInvalidSender
-	}
-
-	// If sender is already a Matrix ID, skip external auth
-	if !strings.HasPrefix(senderStr, "@") {
-		// Not a Matrix ID - check if we have a mapping for it
-		resolvedMatrix := s.resolveMatrixUser(senderStr)
-		if resolvedMatrix == "" {
-			// No mapping exists - try external auth if password is provided
-			if strings.TrimSpace(req.Password) == "" {
-				logger.Warn().Str("sender", senderStr).Msg("sender not resolvable and no password provided")
-				return nil, ErrAuthentication
-			}
-			if err := s.validateAndPersistMappings(context.Background(), senderStr, req.Password); err != nil {
-				return nil, err
-			}
-		} else {
-			logger.Debug().Str("sender", senderStr).Str("resolved_matrix_id", string(resolvedMatrix)).Msg("sender resolved from existing mapping, skipping external auth")
-		}
-	} else {
-		logger.Debug().Str("sender", senderStr).Msg("sender is already a Matrix ID, skipping external auth")
+	if err := s.authenticateAndPersistMappings(context.Background(), req.From, req.Password); err != nil {
+		return nil, err
 	}
 
 	// Resolve sender to Matrix ID using mappings
@@ -151,36 +127,32 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		return nil, ErrAuthentication
 	}
 
-	recipientStr := strings.TrimSpace(req.To)
-	if recipientStr == "" {
+	if req.To == "" {
 		logger.Warn().Msg("send message: empty recipient")
 		return nil, ErrInvalidRecipient
 	}
 
-	// Check if recipient is a room ID first
-	var roomID id.RoomID
-	var recipientMatrix id.UserID
-	if strings.HasPrefix(recipientStr, "!") {
-		// It's already a room ID, use it directly
-		roomID = id.RoomID(recipientStr)
-		logger.Debug().Str("recipient", string(roomID)).Msg("recipient is a room ID, using directly")
-	} else {
-		// Try to resolve as Matrix user ID or mapping
-		recipientMatrix = s.resolveMatrixUser(recipientStr)
-		if recipientMatrix == "" {
-			logger.Warn().Str("recipient", recipientStr).Msg("recipient is not a valid Matrix user ID or room ID")
-			return nil, ErrInvalidRecipient
-		}
+	// Require password for send_message requests
+	if strings.TrimSpace(req.Password) == "" {
+		logger.Warn().Msg("send message: empty password")
+		return nil, ErrAuthentication
+	}
 
-		logger.Debug().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Msg("resolved sender and recipient to Matrix user IDs")
+	// Try to resolve as Matrix user ID or mapping
+	recipientMatrix := s.resolveMatrixUser(req.To)
+	if recipientMatrix == "" {
+		logger.Warn().Str("recipient", req.To).Msg("recipient is not a valid Matrix user ID or room ID")
+		return nil, ErrInvalidRecipient
+	}
 
-		// For 1-to-1 messaging, ensure a direct room exists between sender and recipient
-		var err error
-		roomID, err = s.ensureDirectRoom(ctx, senderMatrix, recipientMatrix)
-		if err != nil {
-			logger.Error().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Err(err).Msg("failed to ensure direct room")
-			return nil, err
-		}
+	logger.Debug().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Msg("resolved sender and recipient to Matrix user IDs")
+
+	// For 1-to-1 messaging, ensure a direct room exists between sender and recipient
+	var err error
+	roomID, err := s.ensureDirectRoom(ctx, senderMatrix, recipientMatrix)
+	if err != nil {
+		logger.Error().Str("sender", string(senderMatrix)).Str("recipient", string(recipientMatrix)).Err(err).Msg("failed to ensure direct room")
+		return nil, err
 	}
 
 	if recipientMatrix != "" {
@@ -189,7 +161,7 @@ func (s *MessageService) SendMessage(ctx context.Context, req *models.SendMessag
 		logger.Debug().Str("sender", string(senderMatrix)).Str("room_id", string(roomID)).Msg("sending message to room")
 	}
 	// Ensure the sender is a member of the room (in case join failed during room creation)
-	_, err := s.matrixClient.JoinRoom(ctx, senderMatrix, roomID)
+	_, err = s.matrixClient.JoinRoom(ctx, senderMatrix, roomID)
 	if err != nil {
 		logger.Error().Str("sender", string(senderMatrix)).Str("room_id", string(roomID)).Err(err).Msg("failed to join room")
 		return nil, fmt.Errorf("send message: %w", err)
@@ -231,7 +203,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 				logger.Warn().Str("username", userName).Msg("username not resolvable and no password provided")
 				return nil, ErrAuthentication
 			}
-			if err := s.validateAndPersistMappings(ctx, userName, req.Password); err != nil {
+			if err := s.authenticateAndPersistMappings(ctx, userName, req.Password); err != nil {
 				return nil, err
 			}
 		} else {
@@ -344,6 +316,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 // resolveMatrixUser resolves an identifier to a valid Matrix user ID.
 // If the identifier is already a valid Matrix user ID (starts with @), it's returned as-is.
+// If the identifier is in format "username@domain", extracts the username part.
 // Otherwise, it tries to look up the identifier in the mapping store with the following logic:
 //   - First tries to match the identifier as the main number
 //   - If no match, tries to find the identifier in any entry's sub_numbers array
@@ -351,6 +324,7 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 //
 // Returns empty string if the identifier cannot be resolved.
 func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
+	logger.Debug().Str("identifier", identifier).Msg("resolving identifier to Matrix user ID")
 	identifier = strings.TrimSpace(identifier)
 
 	// If it's already a valid Matrix user ID, return it
@@ -358,8 +332,14 @@ func (s *MessageService) resolveMatrixUser(identifier string) id.UserID {
 		return id.UserID(identifier)
 	}
 
+	// Extract username from "username@domain" format if present
+	if idx := strings.Index(identifier, "@"); idx > 0 {
+		identifier = identifier[:idx]
+		logger.Debug().Str("extracted_username", identifier).Msg("extracted username from user@domain format")
+	}
+
 	// Try to look up in mappings (e.g., phone number to Matrix user)
-	if entry, ok := s.getMapping(identifier); ok && entry.MatrixID != "" {
+	if entry, ok := s.LookupMapping(identifier); ok == nil {
 		logger.Debug().Str("original_identifier", identifier).Str("resolved_user", entry.MatrixID).Msg("identifier resolved from mapping")
 		return id.UserID(entry.MatrixID)
 	}
@@ -544,33 +524,6 @@ func (s *MessageService) getMapping(key string) (mappingEntry, bool) {
 	return entry, ok
 }
 
-func (s *MessageService) setMapping(entry mappingEntry) mappingEntry {
-	if entry.Number == 0 {
-		logger.Warn().Msg("attempted to set mapping with empty number")
-		return entry
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Clean up old sub-number mappings if updating an existing entry
-	if oldEntry, exists := s.mappings[fmt.Sprintf("%d", entry.Number)]; exists {
-		for _, sub := range oldEntry.SubNumbers {
-			delete(s.subNumberMappings, sub)
-		}
-	}
-
-	entry.UpdatedAt = s.now()
-	s.mappings[fmt.Sprintf("%d", entry.Number)] = entry
-
-	// Update sub-number index
-	for _, sub := range entry.SubNumbers {
-		s.subNumberMappings[sub] = entry.MatrixID
-	}
-
-	logger.Debug().Int("number", entry.Number).Str("room_id", string(entry.RoomID)).Msg("mapping stored")
-	return entry
-}
-
 // LookupMapping returns the currently stored mapping for a given key (phone number or user pair).
 // It searches:
 //   - First by the main number
@@ -596,7 +549,9 @@ func (s *MessageService) LookupMapping(key string) (*models.MappingResponse, err
 	s.mu.RUnlock()
 
 	return nil, ErrMappingNotFound
-} // ListMappings returns all stored mappings.
+}
+
+// ListMappings returns all stored mappings.
 func (s *MessageService) ListMappings() ([]*models.MappingResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -614,46 +569,50 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 		return nil, errors.New("number is required")
 	}
 
+	matrixID := strings.TrimSpace(req.MatrixID)
+	if matrixID == "" {
+		return nil, errors.New("matrix_id is required")
+	}
+
+	// Determine a sensible "username" from the provided Matrix identifier.
+	// For user IDs and aliases we extract the normalized localpart (without @/# and without :domain).
+	// For room IDs (starting with '!') we store the RoomID and leave UserName empty.
+	userName := normalizeLocalpart(matrixID)
+
 	entry := mappingEntry{
 		Number:     req.Number,
 		MatrixID:   strings.TrimSpace(req.MatrixID),
+		UserName:   userName,
 		SubNumbers: req.SubNumbers,
 		UpdatedAt:  s.now(),
 	}
-	entry = s.setMapping(entry)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Clean up old sub-number mappings if updating an existing entry
+	if oldEntry, exists := s.mappings[fmt.Sprintf("%d", req.Number)]; exists {
+		for _, sub := range oldEntry.SubNumbers {
+			delete(s.subNumberMappings, sub)
+		}
+	}
+
+	entry.UpdatedAt = s.now()
+	// Double map: by number and by username
+	s.mappings[fmt.Sprintf("%d", entry.Number)] = entry
+	s.mappings[userName] = entry
+
+	// Update sub-number index
+	for _, sub := range entry.SubNumbers {
+		s.subNumberMappings[sub] = entry.MatrixID
+	}
+
+	logger.Debug().
+		Str("username", entry.UserName).
+		Int("number", entry.Number).
+		Interface("sub_numbers", entry.SubNumbers).
+		Msg("mapping stored")
 	return s.buildMappingResponse(entry), nil
-}
-
-// LoadMappingsFromFile loads mappings from a JSON file.
-// See docs/example-mapping.json for the expected format.
-// This is typically called at startup if MAPPING_FILE environment variable is set.
-func (s *MessageService) LoadMappingsFromFile(filePath string) error {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read mapping file: %w", err)
-	}
-
-	var mappingArray []models.MappingRequest
-	if err := json.Unmarshal(data, &mappingArray); err != nil {
-		return fmt.Errorf("failed to parse mapping file: %w", err)
-	}
-
-	for _, req := range mappingArray {
-		if req.Number == 0 {
-			logger.Warn().Msg("skipping mapping with empty number")
-			continue
-		}
-		entry := mappingEntry{
-			Number:     req.Number,
-			MatrixID:   req.MatrixID,
-			SubNumbers: req.SubNumbers,
-			UpdatedAt:  s.now(),
-		}
-		s.setMapping(entry)
-	}
-
-	logger.Info().Int("count", len(mappingArray)).Str("file", filePath).Msg("mappings loaded from file")
-	return nil
 }
 
 func (s *MessageService) buildMappingResponse(entry mappingEntry) *models.MappingResponse {
@@ -728,7 +687,7 @@ func (s *MessageService) ReportPushToken(ctx context.Context, req *models.PushTo
 	}
 
 	// Validate extension + secret with external auth via AuthClient
-	if err := s.validateAndPersistMappings(ctx, userName, req.Password); err != nil {
+	if err := s.authenticateAndPersistMappings(ctx, userName, req.Password); err != nil {
 		return nil, err
 	}
 

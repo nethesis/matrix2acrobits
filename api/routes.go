@@ -80,12 +80,13 @@ func (h handler) fetchMessages(c echo.Context) error {
 
 func (h handler) pushTokenReport(c echo.Context) error {
 	var req models.PushTokenReportRequest
+	// Bind early so we can log the full struct for debugging.
+	// We log the entire request struct to capture all fields without depending on their names.
 	if err := c.Bind(&req); err != nil {
 		logger.Warn().Str("endpoint", "push_token_report").Err(err).Msg("invalid request payload")
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
 	}
-
-	logger.Debug().Str("endpoint", "push_token_report").Str("selector", req.Selector).Msg("processing push token report")
+	logger.Debug().Str("endpoint", "push_token_report").Interface("payload", req).Msg("push_token_report payload fields")
 
 	resp, err := h.svc.ReportPushToken(c.Request().Context(), &req)
 	if err != nil {
