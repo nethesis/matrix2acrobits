@@ -77,8 +77,13 @@ Limitations:
 - when a private room is deleted, there is no way to send messages to the user
 - text-only messages are supported (no media, no rich content)
 - only one-to-one direct messaging is supported (no group chats)
+- before using the chat from the app, users who receive or send must have logged into Matrix at least once using an official client (Cinny or Element)
 
 The following features are not yet implemented:
 
 - Account removal: https://doc.acrobits.net/api/client/account_removal_reporter.html#account-removal-reporter-webservice
-- Messages with media content
+- Messages with media content:
+  - https://doc.acrobits.net/api/client/x-acro-filetransfer.html
+  - https://doc.acrobits.net/api/client/decryption.html
+  - https://doc.acrobits.net/mmmsg/index.html
+  - The *Rich Messaging* feature must be enabled inside Acrobits app

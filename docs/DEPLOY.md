@@ -6,7 +6,18 @@ The deploy consists of two main steps:
 
 ## Acrobits
 
-Substutute `synapse.gs.nethserver.net` with your Matrix homeserver name.
+Replace `synapse.gs.nethserver.net` with your Matrix homeserver name.
+
+The following features must be enabled:
+- *Incoming and Outgoing Messages via Web Service*
+- *Rich Messaging*, needed only to allow to send attachments (not implemented yet)
+
+Automatic provisioning:
+
+- deploy `ctiapp-authproxy` from the [this PR](https://github.com/nethesis/ctiapp-authproxy/pull/16)
+- set the deployed hostname inside the **External provisioning** field
+
+As an alternative to automatic provisioning, manual provisioning options:
 
 - **General Messaging Configuration**: select on **Web Service** datasource
 - **Outgoing SMS via Web Service**:
@@ -26,96 +37,50 @@ Substutute `synapse.gs.nethserver.net` with your Matrix homeserver name.
 
 To function correctly, the proxy must be registered as an Application Service with your Synapse homeserver.
 
-## Manual setup on an existing NS8 installation
+The following configurations are required:
+- a create a registration YAML file (e.g., `acrobits-proxy.yaml`): this file tells Synapse how to communicate with the proxy
+- an updated `homeserver.yaml` to include the Application Service registration file
+- a route to `/m2a` in traefik to point to the proxy
+- a route to `/_matrix/push/v1/notify` in traefik to point to the proxy (for push notifications)
 
-Install matrix:
-```
-add-module ghcr.io/nethserver/matrix:latest
-```
+Everything is already implemented inside [ns8-matrix](https://github.com/NethServer/ns8-matrix) module.
 
-Enter the matrix user shell:
-```
-runagent -m matrix1
-```
+### Matrix <-> Acrobits Mobile App Integration Testing
 
-Download the container image:
-```
-podman pull ghcr.io/nethesis/matrix2acrobits:latest
-```
+This is the current procedure to test the integration.
 
-First, create a registration YAML file (e.g., `acrobits-proxy.yaml`) and place it on your homeserver. This file tells Synapse how to communicate with the proxy.
-```
-cat <<EOF >synapse-config/acrobits-proxy.yaml
-id: acrobits-proxy
-url: http://localhost:8080 
-as_token: "secret"
-hs_token: "secret"
-sender_localpart: _acrobits_proxy
-namespaces:
-  users:
-    - exclusive: false
-      regex: '@.*'
-  aliases:
-    - exclusive: false
-      regex: '.*'
-  rooms:
-    - exclusive: false
-      regex: '.*'
-EOF
+### Users
+
+1. Install a local LDAP domain.
+2. Create at least two users (`user1` and `user2`).
+
+### Matrix
+
+1. Install Matrix on NethServer 8: `add-module ghcr.io/nethserver/matrix:latest` (will be available in the forge soon).
+2. Configure Matrix using the UI; leave the NethVoice-related field empty (we will configure it later).
+3. Enable at least one client (I recommend Cinny as it is simpler).
+4. Log in with `user1` and `user2` on the Matrix client.
+
+### NethVoice
+
+1. Install the experimental version of NethVoice: `add-module ghcr.io/nethesis/nethvoice:matrix_integration`.
+2. Configure NethVoice by associating it with the LDAP domain created above.
+3. Configure the two users in the wizard, ensuring you assign the mobile app extension to both.
+4. Configure the Matrix integration:
+Retrieve the Matrix UUID: `redis-cli hget module/matrix1/environment MODULE_UUID`, and use it in the command below:
+```bash
+api-cli run module/nethvoice1/set-matrix-server --data '{"module_uuid": "cf50b191-95d5-435b-bf34-0905bf7dba55"}'
 ```
 
-Next, add the path to your registration file to your Synapse `homeserver.yaml`:
+### Mobile App
 
-```
-echo "app_service_config_files:" >> ../templates/synapse-homeserver.yaml
-echo "   - /data/config/acrobits-proxy.yaml" >> ../templates/synapse-homeserver.yaml
-```
+To test the app, you must use the [NETHTEST](https://providers.cloudsoftphone.com/record/detail/15482) version.
 
-You must generate your own secure random strings for `as_token` and `hs_token`.
-
-Restart the service:
-```
-systemctl --user restart synapse
-```
-
-Start the matrix2acrobits container:
-```
-podman run -d --rm --replace --name matrix2acrobits --network host -e LOGLEVEL=debug  -e MATRIX_HOMESERVER_URL=https://synapse.gs.nethserver.net -e MATRIX_AS_TOKEN=secret -e PROXY_PORT=8080 -e AS_USER_ID=@_acrobits_proxy:synapse.gs.nethserver.net -e PROXY_URL=https://synapse.gs.nethserver.net/ -e EXT_AUTH_URL=https://voice.gs.nethserver.net/freepbx/rest/testextauth ghcr.io/nethesis/matrix2acrobits
-```
-
-Configure traefik to route /m2a to the proxy:
-```
-api-cli run set-route  --agent module/traefik1 --data '{"instance": "matrix1-m2a", "name":"synapse-m2a","host":"synapse.gs.nethserver.net","path":"/m2a","url":"http://localhost:8080","lets_encrypt":true, "strip_prefix": true}'
-```
-
-Configure traefik to route /_matrix/push/v1/notify to the proxy:
-```
-api-cli run set-route  --agent module/traefik1 --data '{"instance": "matrix1-push", "name":"synapse-push","host":"synapse.gs.nethserver.net","path":"/_matrix/push/v1/notify","url":"http://localhost:8080","lets_encrypt":true, "strip_prefix": false}'
-```
-
-Now:
-- login to Element with the first user (giacomo)
-- login to Element with the second user (mario)
-
-After the above logins, you can send a message from giacomo (91201) to mario (202) using the proxy API:
-```
-curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "91201",
-    "password": "giacomo",
-    "to": "202",
-    "body": "Hello Mario — this is Giacomo (curl test)",
-    "content_type": "text/plain"
-  }'
-```
-
-Send message using Matrix ID as recipient - Giacomo to Mario:
-```
-curl -s -X POST   https://synapse.gs.nethserver.net/m2a/api/client/send_message   -H "Content-Type: application/json"   -d '{
-    "from": "91201",
-    "password": "giacomo",
-    "to": "@mario:synapse.gs.nethserver.net",
-    "body": "Hello Mario — this is Giacomo (curl test)",
-    "content_type": "text/plain"
-  }'
-```
+1. Download the [Cloud Softphone](https://play.google.com/store/apps/details?id=cz.acrobits.softphone.cloudphone&hl=it) application.
+2. Log in with these credentials:
+  * **Username:** `user1@<fqdn_nethvoice>@NETHTEST*`
+  * **Password:** `<password_user1>`
+  (If this login does not work, you need to create a dummy QR code on the NETHTEST app).
+3. Try sending a message to another user: the message should be delivered to the Matrix client, and replies should return to the app.
+4. Write a message from Cinny to the app (a room will open after step 3); the message should be delivered via push notification if the app is closed.
 
