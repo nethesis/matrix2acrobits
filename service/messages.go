@@ -264,16 +264,94 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 			logger.Debug().Str("event_id", string(evt.ID)).Str("room_id", string(eventRoomID)).Msg("processing message event")
 
+			// Extract msgtype to determine message type
+			msgtype := ""
+			if mt, ok := evt.Content.Raw["msgtype"].(string); ok {
+				msgtype = mt
+			}
+
 			body := ""
 			if b, ok := evt.Content.Raw["body"].(string); ok {
 				body = b
 			}
+
 			sms := models.SMS{
 				SMSID:       string(evt.ID),
 				SendingDate: time.UnixMilli(evt.Timestamp).UTC().Format(time.RFC3339),
 				SMSText:     body,
 				ContentType: "text/plain",
 				StreamID:    string(roomID),
+			}
+
+			// Handle image messages
+			if msgtype == "m.image" {
+				logger.Debug().Str("event_id", string(evt.ID)).Msg("processing image message")
+
+				// Extract image information from event content
+				var mxcURL string
+				var contentSize int
+				var contentType string
+
+				if url, ok := evt.Content.Raw["url"].(string); ok {
+					mxcURL = url
+				}
+
+				// Get info from info object if present
+				if info, ok := evt.Content.Raw["info"].(map[string]interface{}); ok {
+					if size, ok := info["size"].(float64); ok {
+						contentSize = int(size)
+					}
+					if ct, ok := info["mimetype"].(string); ok {
+						contentType = ct
+					}
+				}
+
+				// Download the image and generate preview
+				if mxcURL != "" {
+					imageData, detectedType, err := s.matrixClient.DownloadMedia(ctx, mxcURL)
+					if err != nil {
+						logger.Error().Str("mxc_url", mxcURL).Err(err).Msg("failed to download image, skipping attachment")
+					} else {
+						// Use detected type if not specified in event
+						if contentType == "" {
+							contentType = detectedType
+						}
+
+						// Generate preview
+						preview, err := GenerateImagePreview(imageData)
+						if err != nil {
+							logger.Warn().Err(err).Msg("failed to generate image preview")
+						}
+
+						// Build the public URL for the image using proxy URL
+						// Convert mxc://server/mediaId to https://proxy.url/_matrix/media/v3/download/server/mediaId
+						publicURL := s.buildMediaURL(mxcURL)
+
+						attachment := models.Attachment{
+							Type:     contentType,
+							URL:      publicURL,
+							Size:     contentSize,
+							Filename: body, // Use body as filename if available
+						}
+
+						if preview != "" {
+							attachment.Preview = &models.AttachmentPreview{
+								Type:    "image/jpeg",
+								Content: preview,
+							}
+						}
+
+						sms.Attachments = []models.Attachment{attachment}
+						sms.ContentType = "application/x-acro-filetransfer+json"
+
+						logger.Debug().
+							Str("event_id", string(evt.ID)).
+							Str("mxc_url", mxcURL).
+							Str("public_url", publicURL).
+							Int("size", contentSize).
+							Msg("processed image attachment")
+					}
+				}
 			}
 
 			// Determine if I sent the message
@@ -781,4 +859,30 @@ func (s *MessageService) clearBatchToken(userID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.batchTokens, userID)
+}
+
+// buildMediaURL converts an mxc:// URL to a public HTTP(S) URL using the homeserver URL.
+// Matrix spec: https://spec.matrix.org/latest/client-server-api/#content-repository
+// Example: mxc://server.com/mediaId -> https://homeserver.com/_matrix/media/v3/download/server.com/mediaId
+func (s *MessageService) buildMediaURL(mxcURL string) string {
+	// Parse mxc:// URL format: mxc://<server-name>/<media-id>
+	if !strings.HasPrefix(mxcURL, "mxc://") {
+		logger.Warn().Str("url", mxcURL).Msg("invalid mxc URL, expected mxc:// prefix")
+		return mxcURL
+	}
+
+	// Remove mxc:// prefix
+	pathPart := strings.TrimPrefix(mxcURL, "mxc://")
+
+	// Use proxy URL if configured, otherwise use homeserver URL
+	baseURL := s.proxyURL
+	if baseURL == "" {
+		logger.Warn().Msg("PROXY_URL not configured, using homeserver URL for media")
+		baseURL = s.matrixClient.HomeserverURL
+	}
+
+	// Build the public download URL
+	publicURL := strings.TrimSuffix(baseURL, "/") + "/_matrix/media/v3/download/" + pathPart
+
+	return publicURL
 }

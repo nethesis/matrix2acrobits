@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,7 +24,6 @@ import (
 	"maunium.net/go/mautrix/id"
 )
 
-const testEnvFile = "test/test.env"
 const testServerPort = "18080"
 
 type testConfig struct {
@@ -119,7 +119,7 @@ func startTestServer(cfg *testConfig) (*echo.Echo, error) {
 		MatrixAsUserID:       id.UserID(cfg.asUser),
 		MatrixHomeserverHost: cfg.serverName,
 		PushTokenDBPath:      "/tmp/push_tokens_test.db",
-		ProxyURL:             cfg.homeserverURL,
+		ProxyURL:             "http://127.0.0.1:18080",
 		CacheTTLSeconds:      3600,
 		CacheTTL:             3600 * time.Second,
 		ExtAuthURL:           "http://localhost:18081",
@@ -208,12 +208,20 @@ func doRequest(method, url string, body interface{}, headers map[string]string) 
 // parsed response (may be empty) and any final error.
 func fetchMessagesWithRetry(t *testing.T, baseURL, username string, timeout time.Duration) (models.FetchMessagesResponse, error) {
 	t.Helper()
+	return fetchMessagesWithRetryAndPassword(t, baseURL, username, "", timeout)
+}
+
+// fetchMessagesWithRetryAndPassword calls the proxy fetch_messages endpoint repeatedly until
+// the response parses successfully or the timeout elapses. It accepts an optional password.
+func fetchMessagesWithRetryAndPassword(t *testing.T, baseURL, username, password string, timeout time.Duration) (models.FetchMessagesResponse, error) {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var lastResp models.FetchMessagesResponse
 	var lastErr error
 	for time.Now().Before(deadline) {
 		fetchReq := models.FetchMessagesRequest{
 			Username: username,
+			Password: password,
 			LastID:   "",
 		}
 		resp, body, err := doRequest("POST", baseURL+"/api/client/fetch_messages", fetchReq, nil)
@@ -238,42 +246,6 @@ func fetchMessagesWithRetry(t *testing.T, baseURL, username string, timeout time
 		lastErr = fmt.Errorf("fetch messages timed out after %s", timeout)
 	}
 	return lastResp, lastErr
-}
-
-// generateMappingVariants returns likely variants for a phone number mapping key.
-func generateMappingVariants(s string) []string {
-	out := make([]string, 0, 4)
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return out
-	}
-	out = append(out, trimmed)
-	// if starts with +, add without +
-	if strings.HasPrefix(trimmed, "+") {
-		out = append(out, strings.TrimPrefix(trimmed, "+"))
-	}
-	// digits-only
-	digits := make([]rune, 0, len(trimmed))
-	for _, r := range trimmed {
-		if r >= '0' && r <= '9' {
-			digits = append(digits, r)
-		}
-	}
-	if len(digits) > 0 {
-		digitsOnly := string(digits)
-		if digitsOnly != trimmed {
-			out = append(out, digitsOnly)
-		}
-	}
-	return out
-}
-
-// Helper to get localpart from username like `user@domain.com`
-func getLocalpart(username string) string {
-	if idx := strings.Index(username, "@"); idx != -1 {
-		return username[:idx]
-	}
-	return username
 }
 
 func TestIntegration_PushTokenReport(t *testing.T) {
@@ -523,4 +495,464 @@ func TestIntegration_SendAndFetchMessages(t *testing.T) {
 			t.Errorf("test message not found in received messages for %s", cfg.user2)
 		}
 	})
+}
+
+func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
+	cfg := checkTestEnv(t)
+
+	// This test runs against a live homeserver defined in test.env
+	// It requires the homeserver to be configured with the Application Service.
+	if os.Getenv("RUN_INTEGRATION_TESTS") == "" {
+		t.Skip("Skipping integration tests; set RUN_INTEGRATION_TESTS=1 to run.")
+	}
+
+	server, err := startTestServer(cfg)
+	if err != nil {
+		t.Fatalf("failed to start test server: %v", err)
+	}
+	defer stopTestServer(server)
+
+	baseURL := "http://127.0.0.1:" + testServerPort
+
+	// Load the test image
+	imageData, err := os.ReadFile("test/test.jpg")
+	if err != nil {
+		t.Fatalf("failed to read test/test.jpg: %v", err)
+	}
+	t.Logf("Loaded test image: %d bytes", len(imageData))
+
+	// Step 1: Send image from USER1 to USER2 using Matrix API
+	t.Run("SendImageViaMatrix", func(t *testing.T) {
+		// Create a Matrix client for user1
+		user1MatrixID := id.UserID(cfg.user1)
+
+		uploadResp, err := uploadImageToMatrix(t, cfg, imageData)
+		if err != nil {
+			t.Fatalf("failed to upload image: %v", err)
+		}
+		t.Logf("Image uploaded to Matrix: %s", uploadResp)
+
+		// Create a room between user1 and user2 and send the image
+		roomID, err := getOrCreateDirectRoom(t, cfg, cfg.user1, cfg.user2)
+		if err != nil {
+			t.Fatalf("failed to get/create direct room: %v", err)
+		}
+		t.Logf("Direct room created/found: %s", roomID)
+
+		// Join the room as user1 (as admin to ensure it works)
+		err = joinRoomAsUser(t, cfg, cfg.user1, roomID)
+		if err != nil {
+			t.Logf("warning: failed to join room as user1: %v", err)
+		} else {
+			t.Logf("Successfully joined room as user1")
+		}
+
+		// Join the room as user2 so they can receive the message
+		// First, get Mario's access token by logging in
+		user2Token, err := loginUser(t, cfg, strings.Split(cfg.user2, "@")[0], cfg.user2Password)
+		if err != nil {
+			t.Logf("warning: failed to get user2 access token: %v", err)
+		} else {
+			t.Logf("Got user2 access token")
+
+			err = joinRoomAsUserWithToken(t, cfg, user2Token, roomID)
+			if err != nil {
+				t.Fatalf("failed to join room as user2: %v", err)
+			}
+			t.Logf("Successfully joined room as user2 with their own token")
+		}
+
+		// Also try with admin token as backup
+		err = joinRoomAsUser(t, cfg, cfg.user2, roomID)
+		if err != nil {
+			t.Logf("warning: failed to join room as user2 with admin: %v", err)
+		} else {
+			t.Logf("Also joined room as user2 with admin token")
+		}
+
+		// First send a test text message to verify the room is working
+		testResp := map[string]interface{}{
+			"msgtype": "m.text",
+			"body":    "Test text message before image",
+		}
+		textURL := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/send/m.room.message", cfg.homeserverURL, roomID)
+		textBody, _ := json.Marshal(testResp)
+		textReq, _ := http.NewRequest("POST", textURL, bytes.NewReader(textBody))
+		textReq.Header.Set("Content-Type", "application/json")
+		textReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.adminToken))
+		textClient := http.Client{Timeout: 10 * time.Second}
+		textHttpResp, _ := textClient.Do(textReq)
+		textHttpResp.Body.Close()
+		t.Logf("Sent test text message to room")
+
+		// Send image message using Matrix API
+		eventID, err := sendImageMessage(t, cfg, user1MatrixID, roomID, uploadResp, "Test image message")
+		if err != nil {
+			t.Fatalf("failed to send image message: %v", err)
+		}
+		t.Logf("Image message sent successfully to room %s with event ID: %s", roomID, eventID)
+	})
+
+	// Step 2: Fetch messages as USER2 and verify image attachment
+	t.Run("FetchImageAndVerify", func(t *testing.T) {
+		// Give the server a moment to process the message
+		time.Sleep(500 * time.Millisecond)
+
+		// Try multiple fetches until we see the image message or timeout
+		var imageMsg *models.SMS
+		for attempts := 0; attempts < 5; attempts++ {
+			fetchResp, err := fetchMessagesWithRetryAndPassword(t, baseURL, cfg.user2, cfg.user2Password, 10*time.Second)
+			if err != nil {
+				t.Logf("Attempt %d: fetch messages failed: %v", attempts+1, err)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+
+			// Log attempt info
+			t.Logf("Attempt %d: Total received messages: %d", attempts+1, len(fetchResp.ReceivedSMSs))
+
+			// Find the image or text message from our test
+			for i := range fetchResp.ReceivedSMSs {
+				msg := &fetchResp.ReceivedSMSs[i]
+				if (msg.ContentType == "application/x-acro-filetransfer+json" || msg.SMSText == "Test text message before image" || msg.SMSText == "Test image message") && len(msg.Attachments) > 0 {
+					t.Logf("Attempt %d: Found image message with %d attachments", attempts+1, len(msg.Attachments))
+					imageMsg = msg
+					break
+				}
+				if msg.SMSText == "Test text message before image" || msg.SMSText == "Test image message" {
+					t.Logf("Attempt %d: Found test message (text): %s", attempts+1, msg.SMSText)
+				}
+			}
+
+			if imageMsg != nil {
+				break
+			}
+
+			// Sleep before retry
+			if attempts < 4 {
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+
+		if imageMsg == nil {
+			t.Fatalf("no image message found in received messages after multiple attempts")
+		}
+
+		// Verify attachment structure
+		if len(imageMsg.Attachments) == 0 {
+			t.Fatalf("image message has no attachments")
+		}
+
+		attachment := imageMsg.Attachments[0]
+		t.Logf("Attachment type: %s, url: %s, size: %d", attachment.Type, attachment.URL, attachment.Size)
+
+		if attachment.Type == "" {
+			t.Errorf("attachment type is empty")
+		}
+
+		if attachment.URL == "" {
+			t.Errorf("attachment url is empty")
+		}
+
+		if attachment.Size == 0 {
+			t.Errorf("attachment size is 0")
+		}
+
+		// Verify preview exists
+		if attachment.Preview == nil || attachment.Preview.Content == "" {
+			t.Errorf("attachment preview is missing or empty")
+		}
+
+		// Step 3: Download the image and verify it matches
+		t.Run("VerifyImagePreview", func(t *testing.T) {
+			// Verify that the attachment has a preview with the correct structure
+			if imageMsg.Attachments[0].Preview == nil {
+				t.Fatalf("attachment has no preview")
+			}
+
+			preview := imageMsg.Attachments[0].Preview
+			if preview.Type != "image/jpeg" {
+				t.Errorf("preview type is %s, expected image/jpeg", preview.Type)
+			}
+
+			if preview.Content == "" {
+				t.Errorf("preview content is empty")
+			}
+
+			// Decode the base64 preview
+			decodedPreview, err := base64.StdEncoding.DecodeString(preview.Content)
+			if err != nil {
+				t.Errorf("failed to decode preview: %v", err)
+			} else if len(decodedPreview) == 0 {
+				t.Errorf("decoded preview is empty")
+			} else {
+				t.Logf("Preview decoded successfully: %d bytes", len(decodedPreview))
+			}
+
+			// Verify the attachment structure
+			t.Logf("Attachment structure verified: Type=%s, URL=%s, Size=%d, HasPreview=%v",
+				imageMsg.Attachments[0].Type,
+				imageMsg.Attachments[0].URL,
+				imageMsg.Attachments[0].Size,
+				imageMsg.Attachments[0].Preview != nil)
+		})
+	})
+}
+
+// uploadImageToMatrix uploads an image to the Matrix media repository
+// and returns the mxc:// URL
+func uploadImageToMatrix(t *testing.T, cfg *testConfig, imageData []byte) (string, error) {
+	t.Helper()
+
+	client := http.Client{Timeout: 10 * time.Second}
+	url := fmt.Sprintf("%s/_matrix/media/v3/upload?access_token=%s", cfg.homeserverURL, cfg.adminToken)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(imageData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "image/jpeg")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var uploadResp struct {
+		ContentURI string `json:"content_uri"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&uploadResp); err != nil {
+		return "", fmt.Errorf("failed to parse upload response: %w", err)
+	}
+
+	if uploadResp.ContentURI == "" {
+		return "", fmt.Errorf("upload response missing content_uri")
+	}
+
+	return uploadResp.ContentURI, nil
+}
+
+// getOrCreateDirectRoom gets or creates a direct room between two users
+func getOrCreateDirectRoom(t *testing.T, cfg *testConfig, user1, user2 string) (string, error) {
+	t.Helper()
+
+	client := http.Client{Timeout: 10 * time.Second}
+
+	// Convert user IDs to proper Matrix format: extract username and add @ prefix and :homeserver
+	// e.g., "giacomo@localhost" -> "@giacomo:localhost"
+	formatMatrixUserID := func(u string) string {
+		parts := strings.Split(u, "@")
+		if len(parts) == 2 {
+			return "@" + parts[0] + ":" + parts[1]
+		}
+		return "@" + u + ":localhost"
+	}
+
+	inviteUser := formatMatrixUserID(user2)
+
+	// Try to find existing direct room by querying joined rooms
+	// For simplicity, we'll just create a new room
+	createReq := map[string]interface{}{
+		"preset":    "trusted_private_chat",
+		"is_direct": true,
+		"invite": []string{
+			inviteUser,
+		},
+	}
+
+	url := fmt.Sprintf("%s/_matrix/client/v3/createRoom", cfg.homeserverURL)
+	body, _ := json.Marshal(createReq)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.adminToken))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to create room: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create room returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var createResp struct {
+		RoomID string `json:"room_id"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		return "", fmt.Errorf("failed to parse create room response: %w", err)
+	}
+
+	return createResp.RoomID, nil
+}
+
+// joinRoomAsUser joins a room as a specific user using admin API
+func joinRoomAsUser(t *testing.T, cfg *testConfig, userID string, roomID string) error {
+	t.Helper()
+
+	client := http.Client{Timeout: 10 * time.Second}
+
+	url := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/join", cfg.homeserverURL, roomID)
+	body := []byte("{}")
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.adminToken))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to join room: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("join room returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// loginUser logs in as a user and returns their access token
+func loginUser(t *testing.T, cfg *testConfig, username, password string) (string, error) {
+	t.Helper()
+
+	client := http.Client{Timeout: 10 * time.Second}
+
+	loginReq := map[string]interface{}{
+		"type":     "m.login.password",
+		"user":     username,
+		"password": password,
+	}
+
+	url := fmt.Sprintf("%s/_matrix/client/v3/login", cfg.homeserverURL)
+	body, _ := json.Marshal(loginReq)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create login request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("login request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("login returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var loginResp struct {
+		AccessToken string `json:"access_token"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		return "", fmt.Errorf("failed to parse login response: %w", err)
+	}
+
+	return loginResp.AccessToken, nil
+}
+
+// joinRoomAsUserWithToken joins a room as a specific user using their access token
+func joinRoomAsUserWithToken(t *testing.T, cfg *testConfig, accessToken, roomID string) error {
+	t.Helper()
+
+	client := http.Client{Timeout: 10 * time.Second}
+
+	url := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/join", cfg.homeserverURL, roomID)
+	body := []byte("{}")
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to join room: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("join room returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// sendImageMessage sends an image message to a room using Matrix API
+func sendImageMessage(t *testing.T, cfg *testConfig, userID id.UserID, roomID string, mxcURL string, text string) (string, error) {
+	t.Helper()
+
+	client := http.Client{Timeout: 10 * time.Second}
+
+	// Build image message event
+	msgContent := map[string]interface{}{
+		"msgtype": "m.image",
+		"url":     mxcURL,
+		"body":    text,
+		"info": map[string]interface{}{
+			"size":     65000, // approximate size
+			"mimetype": "image/jpeg",
+		},
+	}
+
+	url := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/send/m.room.message", cfg.homeserverURL, roomID)
+	body, _ := json.Marshal(msgContent)
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.adminToken))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("send message returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var sendResp struct {
+		EventID string `json:"event_id"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&sendResp); err != nil {
+		return "", fmt.Errorf("failed to parse send message response: %w", err)
+	}
+
+	return sendResp.EventID, nil
 }
