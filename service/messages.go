@@ -590,8 +590,14 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	numberKey := fmt.Sprintf("%d", req.Number)
 	// Clean up old sub-number mappings if updating an existing entry
-	if oldEntry, exists := s.mappings[fmt.Sprintf("%d", req.Number)]; exists {
+	if oldEntry, exists := s.mappings[numberKey]; exists {
+		for _, sub := range oldEntry.SubNumbers {
+			delete(s.subNumberMappings, sub)
+		}
+	}
+	if oldEntry, exists := s.mappings[userName]; exists {
 		for _, sub := range oldEntry.SubNumbers {
 			delete(s.subNumberMappings, sub)
 		}
@@ -599,7 +605,7 @@ func (s *MessageService) SaveMapping(req *models.MappingRequest) (*models.Mappin
 
 	entry.UpdatedAt = s.now()
 	// Double map: by number and by username
-	s.mappings[fmt.Sprintf("%d", entry.Number)] = entry
+	s.mappings[numberKey] = entry
 	s.mappings[userName] = entry
 
 	// Update sub-number index
