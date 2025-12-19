@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -328,21 +329,32 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 						publicURL := s.buildMediaURL(mxcURL)
 
 						attachment := models.Attachment{
-							Type:     contentType,
-							URL:      publicURL,
-							Size:     contentSize,
-							Filename: body, // Use body as filename if available
+							ContentType: contentType,
+							ContentURL:  publicURL,
+							ContentSize: contentSize,
+							Filename:    body, // Use body as filename if available
 						}
 
 						if preview != "" {
 							attachment.Preview = &models.AttachmentPreview{
-								Type:    "image/jpeg",
-								Content: preview,
+								ContentType: "image/jpeg",
+								Content:     preview,
 							}
 						}
 
-						sms.Attachments = []models.Attachment{attachment}
-						sms.ContentType = "application/x-acro-filetransfer+json"
+						// Create the FileTransfer object and marshal it to JSON for SMSText
+						ft := models.FileTransfer{
+							Body:        body,
+							Attachments: []models.Attachment{attachment},
+						}
+
+						ftJSON, err := json.Marshal(ft)
+						if err != nil {
+							logger.Error().Err(err).Msg("failed to marshal file transfer JSON")
+						} else {
+							sms.SMSText = string(ftJSON)
+							sms.ContentType = "application/x-acro-filetransfer+json"
+						}
 
 						logger.Debug().
 							Str("event_id", string(evt.ID)).

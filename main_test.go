@@ -614,8 +614,8 @@ func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
 			// Find the image or text message from our test
 			for i := range fetchResp.ReceivedSMSs {
 				msg := &fetchResp.ReceivedSMSs[i]
-				if (msg.ContentType == "application/x-acro-filetransfer+json" || msg.SMSText == "Test text message before image" || msg.SMSText == "Test image message") && len(msg.Attachments) > 0 {
-					t.Logf("Attempt %d: Found image message with %d attachments", attempts+1, len(msg.Attachments))
+				if msg.ContentType == "application/x-acro-filetransfer+json" {
+					t.Logf("Attempt %d: Found image message with content type %s", attempts+1, msg.ContentType)
 					imageMsg = msg
 					break
 				}
@@ -639,23 +639,29 @@ func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
 		}
 
 		// Verify attachment structure
-		if len(imageMsg.Attachments) == 0 {
-			t.Fatalf("image message has no attachments")
+		var ft models.FileTransfer
+		err = json.Unmarshal([]byte(imageMsg.SMSText), &ft)
+		if err != nil {
+			t.Fatalf("failed to unmarshal SMSText as FileTransfer: %v. SMSText: %s", err, imageMsg.SMSText)
 		}
 
-		attachment := imageMsg.Attachments[0]
-		t.Logf("Attachment type: %s, url: %s, size: %d", attachment.Type, attachment.URL, attachment.Size)
-
-		if attachment.Type == "" {
-			t.Errorf("attachment type is empty")
+		if len(ft.Attachments) == 0 {
+			t.Fatalf("image message has no attachments in FileTransfer")
 		}
 
-		if attachment.URL == "" {
-			t.Errorf("attachment url is empty")
+		attachment := ft.Attachments[0]
+		t.Logf("Attachment content-type: %s, url: %s, size: %d", attachment.ContentType, attachment.ContentURL, attachment.ContentSize)
+
+		if attachment.ContentType == "" {
+			t.Errorf("attachment content-type is empty")
 		}
 
-		if attachment.Size == 0 {
-			t.Errorf("attachment size is 0")
+		if attachment.ContentURL == "" {
+			t.Errorf("attachment content-url is empty")
+		}
+
+		if attachment.ContentSize == 0 {
+			t.Errorf("attachment content-size is 0")
 		}
 
 		// Verify preview exists
@@ -666,13 +672,13 @@ func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
 		// Step 3: Download the image and verify it matches
 		t.Run("VerifyImagePreview", func(t *testing.T) {
 			// Verify that the attachment has a preview with the correct structure
-			if imageMsg.Attachments[0].Preview == nil {
+			if ft.Attachments[0].Preview == nil {
 				t.Fatalf("attachment has no preview")
 			}
 
-			preview := imageMsg.Attachments[0].Preview
-			if preview.Type != "image/jpeg" {
-				t.Errorf("preview type is %s, expected image/jpeg", preview.Type)
+			preview := ft.Attachments[0].Preview
+			if preview.ContentType != "image/jpeg" {
+				t.Errorf("preview content-type is %s, expected image/jpeg", preview.ContentType)
 			}
 
 			if preview.Content == "" {
@@ -690,11 +696,11 @@ func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
 			}
 
 			// Verify the attachment structure
-			t.Logf("Attachment structure verified: Type=%s, URL=%s, Size=%d, HasPreview=%v",
-				imageMsg.Attachments[0].Type,
-				imageMsg.Attachments[0].URL,
-				imageMsg.Attachments[0].Size,
-				imageMsg.Attachments[0].Preview != nil)
+			t.Logf("Attachment structure verified: ContentType=%s, ContentURL=%s, ContentSize=%d, HasPreview=%v",
+				ft.Attachments[0].ContentType,
+				ft.Attachments[0].ContentURL,
+				ft.Attachments[0].ContentSize,
+				ft.Attachments[0].Preview != nil)
 		})
 	})
 }

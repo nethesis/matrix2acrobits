@@ -33,34 +33,39 @@ type FetchMessagesResponse struct {
 
 // SMS represents a message in the Acrobits Modern API format.
 type SMS struct {
-	SMSID                   string       `json:"sms_id"`
-	SendingDate             string       `json:"sending_date"`
-	Sender                  string       `json:"sender,omitempty"`
-	Recipient               string       `json:"recipient,omitempty"`
-	SMSText                 string       `json:"sms_text"`
-	ContentType             string       `json:"content_type,omitempty"`
-	DispositionNotification string       `json:"disposition_notification,omitempty"`
-	Displayed               bool         `json:"displayed,omitempty"`
-	StreamID                string       `json:"stream_id"`
-	Attachments             []Attachment `json:"attachments,omitempty"`
+	SMSID                   string `json:"sms_id"`
+	SendingDate             string `json:"sending_date"`
+	Sender                  string `json:"sender,omitempty"`
+	Recipient               string `json:"recipient,omitempty"`
+	SMSText                 string `json:"sms_text"`
+	ContentType             string `json:"content_type,omitempty"`
+	DispositionNotification string `json:"disposition_notification,omitempty"`
+	Displayed               bool   `json:"displayed,omitempty"`
+	StreamID                string `json:"stream_id"`
+}
+
+// FileTransfer represents the application/x-acro-filetransfer+json format.
+type FileTransfer struct {
+	Body        string       `json:"body,omitempty"`
+	Attachments []Attachment `json:"attachments"`
 }
 
 // Attachment represents a file attachment in the Acrobits x-acro-filetransfer format.
 type Attachment struct {
-	Type          string             `json:"type,omitempty"`
-	URL           string             `json:"url"`
-	Size          int                `json:"size,omitempty"`
+	ContentType   string             `json:"content-type,omitempty"`
+	ContentURL    string             `json:"content-url"`
+	ContentSize   int                `json:"content-size,omitempty"`
 	Filename      string             `json:"filename,omitempty"`
 	Description   string             `json:"description,omitempty"`
-	EncryptionKey string             `json:"encryption_key,omitempty"`
+	EncryptionKey string             `json:"encryption-key,omitempty"`
 	Hash          string             `json:"hash,omitempty"`
 	Preview       *AttachmentPreview `json:"preview,omitempty"`
 }
 
 // AttachmentPreview represents a low-quality preview of an attachment.
 type AttachmentPreview struct {
-	Type    string `json:"type,omitempty"`
-	Content string `json:"content"` // BASE64 encoded
+	ContentType string `json:"content-type,omitempty"`
+	Content     string `json:"content"` // BASE64 encoded
 }
 
 // Message is a helper struct for internal use.
