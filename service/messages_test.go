@@ -472,20 +472,6 @@ func TestReportPushToken(t *testing.T) {
 	})
 }
 
-// fakeHTTPAuthClient allows controlling responses for testing.
-type fakeHTTPAuthClient struct {
-	ok bool
-}
-
-func (f *fakeHTTPAuthClient) Validate(ctx context.Context, username, password, homeserverHost string) ([]*models.MappingRequest, bool, error) {
-	if f.ok {
-		return []*models.MappingRequest{
-			{Number: 1, MatrixID: "@alice:" + homeserverHost, SubNumbers: []int{}},
-		}, true, nil
-	}
-	return []*models.MappingRequest{}, false, fmt.Errorf("unauthorized")
-}
-
 func TestSaveMapping_Success(t *testing.T) {
 	dbi, err := db.NewDatabase(":memory:")
 	require.NoError(t, err)

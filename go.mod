@@ -3,7 +3,9 @@ module github.com/nethesis/matrix2acrobits
 go 1.24.10
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/labstack/echo/v4 v4.13.4
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
 	maunium.net/go/mautrix v0.26.0
@@ -14,7 +16,6 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
