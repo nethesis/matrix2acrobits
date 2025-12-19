@@ -3,11 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -125,6 +130,7 @@ func startTestServer(cfg *testConfig) (*echo.Echo, error) {
 		ExtAuthURL:           "http://localhost:18081",
 		ExtAuthTimeoutS:      5,
 		ExtAuthTimeout:       5 * time.Second,
+		MMMSGURL:             os.Getenv("MMMSG_URL"),
 	}
 
 	// Initialize push token database
@@ -506,6 +512,36 @@ func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
 		t.Skip("Skipping integration tests; set RUN_INTEGRATION_TESTS=1 to run.")
 	}
 
+	// Start mock MMMSG server
+	uploadedByPath := make(map[string][]byte)
+	var uploadCounter int
+	mmmsgServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			uploadCounter++
+			uploadPath := fmt.Sprintf("/upload/%d", uploadCounter)
+			t.Logf("Mock MMMSG: received POST request, returning upload path %s", uploadPath)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"url": "http://" + r.Host + uploadPath,
+			})
+			return
+		}
+		if r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/upload/") {
+			t.Logf("Mock MMMSG: received PUT request for %s", r.URL.Path)
+			data, _ := io.ReadAll(r.Body)
+			uploadedByPath[r.URL.Path] = data
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		t.Logf("Mock MMMSG: received unexpected %s request for %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mmmsgServer.Close()
+
+	// Set MMMSG_URL to point to our mock server
+	os.Setenv("MMMSG_URL", mmmsgServer.URL)
+	defer os.Unsetenv("MMMSG_URL")
+
 	server, err := startTestServer(cfg)
 	if err != nil {
 		t.Fatalf("failed to start test server: %v", err)
@@ -701,6 +737,51 @@ func TestIntegration_SendAndFetchImageMessages(t *testing.T) {
 				ft.Attachments[0].ContentURL,
 				ft.Attachments[0].ContentSize,
 				ft.Attachments[0].Preview != nil)
+		})
+
+		// Step 4: Verify MMMSG upload and encryption
+		t.Run("VerifyMMMSGUpload", func(t *testing.T) {
+			// Locate the uploaded data for this attachment by using the content URL path
+			parsed, perr := url.Parse(attachment.ContentURL)
+			if perr != nil {
+				t.Fatalf("failed to parse attachment content URL: %v", perr)
+			}
+			uploadedData, ok := uploadedByPath[parsed.Path]
+			if !ok || len(uploadedData) == 0 {
+				t.Fatalf("no data was uploaded to MMMSG for path %s", parsed.Path)
+			}
+			t.Logf("Data uploaded to MMMSG: %d bytes (path=%s)", len(uploadedData), parsed.Path)
+
+			if !strings.HasPrefix(attachment.ContentURL, mmmsgServer.URL) {
+				t.Errorf("attachment content-url %s does not point to mock MMMSG server %s", attachment.ContentURL, mmmsgServer.URL)
+			}
+
+			if attachment.EncryptionKey == "" {
+				t.Errorf("encryption key is missing in attachment")
+			} else {
+				t.Logf("Encryption key found: %s", attachment.EncryptionKey)
+
+				// Verify that uploaded data is different from original (encrypted)
+				if bytes.Equal(uploadedData, imageData) {
+					t.Errorf("uploaded data is not encrypted (matches original)")
+				} else {
+					t.Logf("Uploaded data is encrypted (differs from original)")
+				}
+
+				// Try to decrypt and verify
+				key, _ := hex.DecodeString(attachment.EncryptionKey)
+				block, _ := aes.NewCipher(key)
+				iv := make([]byte, aes.BlockSize)
+				stream := cipher.NewCTR(block, iv)
+				decrypted := make([]byte, len(uploadedData))
+				stream.XORKeyStream(decrypted, uploadedData)
+
+				if !bytes.Equal(decrypted, imageData) {
+					t.Errorf("decrypted data does not match original image data")
+				} else {
+					t.Logf("Decrypted data matches original image data successfully")
+				}
+			}
 		})
 	})
 }
