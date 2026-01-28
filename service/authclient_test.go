@@ -44,12 +44,12 @@ func TestHTTPAuthClient_SuccessfulTwoStepAuth(t *testing.T) {
 					{
 						UserName:      "giacomo",
 						MainExtension: "201",
-						SubExtensions: []string{"91201", "92201"},
+						Extensions:    []string{"91201", "92201"},
 					},
 					{
 						UserName:      "mario",
 						MainExtension: "202",
-						SubExtensions: []string{"91202"},
+						Extensions:    []string{"91202"},
 					},
 				},
 			}
@@ -99,7 +99,7 @@ func TestHTTPAuthClient_PlainUsername(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			resp := models.ChatResponse{
 				Users: []models.ChatUser{
-					{UserName: "giacomo", MainExtension: "201", SubExtensions: []string{}},
+					{UserName: "giacomo", MainExtension: "201", Extensions: []string{}},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -183,7 +183,7 @@ func TestHTTPAuthClient_CacheHit(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			resp := models.ChatResponse{
 				Users: []models.ChatUser{
-					{UserName: "giacomo", MainExtension: "201", SubExtensions: []string{}},
+					{UserName: "giacomo", MainExtension: "201", Extensions: []string{}},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -220,8 +220,8 @@ func TestHTTPAuthClient_InvalidMainExtension(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			resp := models.ChatResponse{
 				Users: []models.ChatUser{
-					{UserName: "giacomo", MainExtension: "201", SubExtensions: []string{}},
-					{UserName: "alice", MainExtension: "invalid", SubExtensions: []string{}},
+					{UserName: "giacomo", MainExtension: "201", Extensions: []string{}},
+					{UserName: "alice", MainExtension: "invalid", Extensions: []string{}},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)

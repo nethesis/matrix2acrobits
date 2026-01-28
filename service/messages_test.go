@@ -390,7 +390,7 @@ func TestReportPushToken(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				resp := models.ChatResponse{
 					Users: []models.ChatUser{
-						{UserName: "alice", MainExtension: "201", SubExtensions: []string{"91201"}},
+						{UserName: "alice", MainExtension: "201", Extensions: []string{"91201"}},
 					},
 				}
 				json.NewEncoder(w).Encode(resp)
@@ -437,7 +437,7 @@ func TestReportPushToken(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				resp := models.ChatResponse{
 					Users: []models.ChatUser{
-						{UserName: "alice", MainExtension: "201", SubExtensions: []string{"91201"}},
+						{UserName: "alice", MainExtension: "201", Extensions: []string{"91201"}},
 					},
 				}
 				json.NewEncoder(w).Encode(resp)

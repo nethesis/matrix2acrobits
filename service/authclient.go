@@ -21,7 +21,7 @@ import (
 // AuthResponse represents the user data returned from the external /chat endpoint.
 type AuthResponse struct {
 	MainExtension string   `json:"main_extension"`
-	SubExtensions []string `json:"sub_extensions"`
+	Extensions    []string `json:"extensions"`
 	UserName      string   `json:"user_name"`
 }
 
@@ -211,7 +211,7 @@ func (h *HTTPAuthClient) Validate(ctx context.Context, username, password, homes
 	// Convert chat users to mappings
 	mappings := make([]*models.MappingRequest, 0, len(chatResponse.Users))
 	for _, user := range chatResponse.Users {
-		logger.Debug().Str("user_name", user.UserName).Str("main_extension", user.MainExtension).Strs("sub_extensions", user.SubExtensions).Msg("authclient: processing chat user")
+		logger.Debug().Str("user_name", user.UserName).Str("main_extension", user.MainExtension).Strs("extensions", user.Extensions).Msg("authclient: processing chat user")
 
 		// Validate main_extension exists and is a number
 		mainExtStr := strings.TrimSpace(user.MainExtension)
@@ -226,8 +226,8 @@ func (h *HTTPAuthClient) Validate(ctx context.Context, username, password, homes
 		}
 
 		// Parse sub extensions
-		subNums := make([]int, 0, len(user.SubExtensions))
-		for _, ssub := range user.SubExtensions {
+		subNums := make([]int, 0, len(user.Extensions))
+		for _, ssub := range user.Extensions {
 			ssub = strings.TrimSpace(ssub)
 			if ssub == "" {
 				continue

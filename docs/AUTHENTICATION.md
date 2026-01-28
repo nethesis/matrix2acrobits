@@ -20,7 +20,7 @@ When a client sends a request with `username` and `password`, the proxy performs
 7. GET from `{EXT_AUTH_URL}/api/chat?users=1` with Bearer token in Authorization header
 8. Parse the response to extract:
    - Matrix homeserver configuration (`matrix.base_url`, `matrix.acrobits_url`)
-   - User mappings from the `users` array (`user_name`, `main_extension`, `sub_extensions`)
+   - User mappings from the `users` array (`user_name`, `main_extension`, `extensions`)
 9. Convert user data into `MappingRequest` objects and cache them
 
 **Error Handling**
