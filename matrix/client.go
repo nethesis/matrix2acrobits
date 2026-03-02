@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,7 +30,7 @@ type Config struct {
 // A mutex is used to make operations thread-safe.
 type MatrixClient struct {
 	cli            *mautrix.Client
-	homeserverURL  string
+	HomeserverURL  string
 	homeserverName string
 	mu             sync.Mutex
 }
@@ -74,7 +75,7 @@ func NewClient(cfg Config) (*MatrixClient, error) {
 
 	return &MatrixClient{
 		cli:            client,
-		homeserverURL:  cfg.HomeserverURL,
+		HomeserverURL:  cfg.HomeserverURL,
 		homeserverName: homeserverName,
 	}, nil
 }
@@ -246,4 +247,46 @@ func (mc *MatrixClient) SetPusher(ctx context.Context, userID id.UserID, req *mo
 		Str("app_id", req.AppID).
 		Msg("matrix: pusher set successfully")
 	return nil
+}
+
+// DownloadMedia downloads media content from Matrix homeserver given an mxc:// URI.
+// Returns the media bytes and content type, or an error if download fails.
+func (mc *MatrixClient) DownloadMedia(ctx context.Context, mxcURL string) ([]byte, string, error) {
+	logger.Debug().Str("mxc_url", mxcURL).Msg("matrix: downloading media")
+
+	// Parse mxc:// URL
+	mxc, err := id.ParseContentURI(mxcURL)
+	if err != nil {
+		logger.Error().Str("mxc_url", mxcURL).Err(err).Msg("matrix: failed to parse mxc URL")
+		return nil, "", fmt.Errorf("invalid mxc URL: %w", err)
+	}
+
+	// Download the media
+	resp, err := mc.cli.Download(ctx, mxc)
+	if err != nil {
+		logger.Error().Str("mxc_url", mxcURL).Err(err).Msg("matrix: failed to download media")
+		return nil, "", fmt.Errorf("download media: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error().Str("mxc_url", mxcURL).Err(err).Msg("matrix: failed to read response body")
+		return nil, "", fmt.Errorf("read media response: %w", err)
+	}
+
+	// Get content type from response header, or detect it from data
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+
+	logger.Debug().
+		Str("mxc_url", mxcURL).
+		Str("content_type", contentType).
+		Int("size", len(data)).
+		Msg("matrix: media downloaded successfully")
+
+	return data, contentType, nil
 }

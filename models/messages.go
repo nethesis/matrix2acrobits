@@ -44,6 +44,30 @@ type SMS struct {
 	StreamID                string `json:"stream_id"`
 }
 
+// FileTransfer represents the application/x-acro-filetransfer+json format.
+type FileTransfer struct {
+	Body        string       `json:"body,omitempty"`
+	Attachments []Attachment `json:"attachments"`
+}
+
+// Attachment represents a file attachment in the Acrobits x-acro-filetransfer format.
+type Attachment struct {
+	ContentType   string             `json:"content-type,omitempty"`
+	ContentURL    string             `json:"content-url"`
+	ContentSize   int                `json:"content-size,omitempty"`
+	Filename      string             `json:"filename,omitempty"`
+	Description   string             `json:"description,omitempty"`
+	EncryptionKey string             `json:"encryption-key,omitempty"`
+	Hash          string             `json:"hash,omitempty"`
+	Preview       *AttachmentPreview `json:"preview,omitempty"`
+}
+
+// AttachmentPreview represents a low-quality preview of an attachment.
+type AttachmentPreview struct {
+	ContentType string `json:"content-type,omitempty"`
+	Content     string `json:"content"` // BASE64 encoded
+}
+
 // Message is a helper struct for internal use.
 
 // PushTokenReportRequest mirrors the Acrobits push token reporter POST JSON schema.

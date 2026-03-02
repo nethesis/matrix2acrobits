@@ -1,9 +1,18 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +46,7 @@ type MessageService struct {
 	authClient     *HTTPAuthClient
 	// Homeserver host used to build Matrix IDs from auth response
 	homeserverHost string
+	mmmsgURL       string
 
 	mu                sync.RWMutex
 	mappings          map[string]mappingEntry
@@ -82,6 +92,7 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 		extAuthTimeout:       cfg.ExtAuthTimeout,
 		authClient:           NewHTTPAuthClient(cfg.ExtAuthURL, cfg.ExtAuthTimeout, cfg.CacheTTL),
 		homeserverHost:       cfg.MatrixHomeserverHost,
+		mmmsgURL:             cfg.MMMSGURL,
 	}
 }
 
@@ -91,21 +102,30 @@ func NewMessageService(matrixClient *matrix.MatrixClient, pushTokenDB *db.Databa
 func (s *MessageService) authenticateAndPersistMappings(ctx context.Context, username, password string) error {
 	mappings, ok, err := s.authClient.Validate(ctx, username, password, s.homeserverHost)
 	if err != nil {
-		if !ok {
-			logger.Warn().Str("username", username).Msg("external auth failed: unauthorized")
-			return ErrAuthentication
-		}
-		logger.Error().Err(err).Msg("external auth request failed")
-		return fmt.Errorf("external auth request failed: %w", err)
+		logger.Warn().Err(err).Str("username", username).Msg("external auth validation failed")
+		return ErrAuthentication
 	}
 
-	// Persist all mappings returned by auth
-	for _, mapReq := range mappings {
-		if _, err := s.SaveMapping(mapReq); err != nil {
-			logger.Error().Err(err).Msg("failed to save mapping from external auth response")
-			return fmt.Errorf("failed to save mapping: %w", err)
+	if !ok {
+		logger.Warn().Str("username", username).Msg("external auth validation returned no access")
+		return ErrAuthentication
+	}
+
+	// Persist mappings into local store
+	for _, m := range mappings {
+		if m == nil {
+			continue
+		}
+		saveReq := &models.MappingRequest{
+			Number:     m.Number,
+			MatrixID:   m.MatrixID,
+			SubNumbers: m.SubNumbers,
+		}
+		if _, err := s.SaveMapping(saveReq); err != nil {
+			logger.Warn().Err(err).Int("number", m.Number).Str("matrix_id", m.MatrixID).Msg("failed to persist mapping from external auth")
 		}
 	}
+
 	return nil
 }
 
@@ -264,16 +284,145 @@ func (s *MessageService) FetchMessages(ctx context.Context, req *models.FetchMes
 
 			logger.Debug().Str("event_id", string(evt.ID)).Str("room_id", string(eventRoomID)).Msg("processing message event")
 
+			// Extract msgtype to determine message type
+			msgtype := ""
+			if mt, ok := evt.Content.Raw["msgtype"].(string); ok {
+				msgtype = mt
+			}
+
 			body := ""
 			if b, ok := evt.Content.Raw["body"].(string); ok {
 				body = b
 			}
+
 			sms := models.SMS{
 				SMSID:       string(evt.ID),
 				SendingDate: time.UnixMilli(evt.Timestamp).UTC().Format(time.RFC3339),
 				SMSText:     body,
 				ContentType: "text/plain",
 				StreamID:    string(roomID),
+			}
+
+			// Handle image messages
+			if msgtype == "m.image" {
+				logger.Debug().Str("event_id", string(evt.ID)).Msg("processing image message")
+
+				// Extract image information from event content
+				var mxcURL string
+				var contentType string
+
+				if url, ok := evt.Content.Raw["url"].(string); ok {
+					mxcURL = url
+				}
+
+				// Get info from info object if present
+				if info, ok := evt.Content.Raw["info"].(map[string]interface{}); ok {
+					if ct, ok := info["mimetype"].(string); ok {
+						contentType = ct
+					}
+				}
+
+				// Download the image and generate preview
+				if mxcURL != "" {
+					imageData, detectedType, err := s.matrixClient.DownloadMedia(ctx, mxcURL)
+					if err != nil {
+						logger.Error().Str("mxc_url", mxcURL).Err(err).Msg("failed to download image, skipping attachment")
+					} else {
+						// Use detected type if not specified in event
+						if contentType == "" {
+							contentType = detectedType
+						}
+
+						// Generate preview
+						preview, err := GenerateImagePreview(imageData)
+						if err != nil {
+							logger.Warn().Err(err).Msg("failed to generate image preview")
+						}
+
+						// Encrypt data for MMMSG
+						encryptedData, encryptionKey, err := encryptData(imageData)
+						if err != nil {
+							logger.Error().Err(err).Msg("failed to encrypt image data")
+							// Fallback to unencrypted if encryption fails?
+							// Better to fail or send unencrypted?
+							// Let's try to send unencrypted if encryption fails, but log it.
+							encryptedData = imageData
+							encryptionKey = ""
+						}
+
+						// Upload to MMMSG
+						// Log key and a checksum for debugging encryption/upload issues
+						if encryptionKey != "" {
+							sum := sha256.Sum256(encryptedData)
+							sumOrig := sha256.Sum256(imageData)
+							logger.Debug().Str("encryption_key", encryptionKey).
+								Str("encrypted_sha256", hex.EncodeToString(sum[:])).
+								Str("original_sha256", hex.EncodeToString(sumOrig[:])).
+								Msg("prepared encrypted payload for upload")
+
+							// Perform a local decryption check to ensure the key decrypts the payload correctly.
+							// This helps catch issues where the encrypted bytes differ from what's stored or uploaded.
+							keyBytes, derr := hex.DecodeString(encryptionKey)
+							if derr == nil {
+								blk, cerr := aes.NewCipher(keyBytes)
+								if cerr == nil {
+									iv := make([]byte, aes.BlockSize)
+									stream := cipher.NewCTR(blk, iv)
+									decryptedTest := make([]byte, len(encryptedData))
+									stream.XORKeyStream(decryptedTest, encryptedData)
+									sumDec := sha256.Sum256(decryptedTest)
+									matches := bytes.Equal(decryptedTest, imageData)
+									logger.Debug().Str("decrypted_sha256", hex.EncodeToString(sumDec[:])).Bool("decryption_matches_original", matches).Msg("local decryption check")
+								} else {
+									logger.Warn().Err(cerr).Msg("local decryption check: failed to create cipher with key")
+								}
+							} else {
+								logger.Warn().Err(derr).Msg("local decryption check: failed to decode hex key")
+							}
+						}
+
+						mmmsgURL, err := s.uploadToMMMSG(ctx, encryptedData, contentType)
+						if err != nil {
+							logger.Error().Err(err).Msg("failed to upload image to MMMSG, skipping attachment")
+						} else {
+							attachment := models.Attachment{
+								ContentType:   contentType,
+								ContentURL:    mmmsgURL,
+								ContentSize:   len(encryptedData),
+								Filename:      "",
+								EncryptionKey: encryptionKey,
+							}
+
+							if preview != "" {
+								attachment.Preview = &models.AttachmentPreview{
+									ContentType: "image/jpeg",
+									Content:     preview,
+								}
+							}
+
+							// Create the FileTransfer object and marshal it to JSON for SMSText
+							ft := models.FileTransfer{
+								Body:        body,
+								Attachments: []models.Attachment{attachment},
+							}
+
+							ftJSON, err := json.Marshal(ft)
+							if err != nil {
+								logger.Error().Err(err).Msg("failed to marshal file transfer JSON")
+							} else {
+								sms.SMSText = string(ftJSON)
+								sms.ContentType = "application/x-acro-filetransfer+json"
+							}
+
+							logger.Debug().
+								Str("event_id", string(evt.ID)).
+								Str("mxc_url", mxcURL).
+								Str("mmmsg_url", mmmsgURL).
+								Int("size", len(encryptedData)).
+								Msg("processed image attachment via MMMSG")
+						}
+					}
+				}
 			}
 
 			// Determine if I sent the message
@@ -781,4 +930,95 @@ func (s *MessageService) clearBatchToken(userID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.batchTokens, userID)
+}
+
+// uploadToMMMSG uploads data to Acrobits MMMSG server and returns the download URL.
+func (s *MessageService) uploadToMMMSG(ctx context.Context, data []byte, contentType string) (string, error) {
+	// 1. POST to MMMSGURL to get upload URL
+	reqBody := map[string]interface{}{
+		"content-type":   contentType,
+		"content-length": len(data),
+	}
+	reqBytes, _ := json.Marshal(reqBody)
+
+	logger.Debug().Str("mmmsg_url", s.mmmsgURL).Str("content_type", contentType).Int("size", len(data)).Msg("requesting upload URL from MMMSG")
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.mmmsgURL, bytes.NewReader(reqBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create MMMSG POST request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to request MMMSG upload URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("MMMSG POST failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var respData struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
+		return "", fmt.Errorf("failed to decode MMMSG response: %w", err)
+	}
+
+	if respData.URL == "" {
+		return "", fmt.Errorf("MMMSG response did not contain a URL")
+	}
+
+	logger.Debug().Str("upload_url", respData.URL).Msg("received upload URL from MMMSG")
+
+	// 2. PUT data to upload URL
+	// Log checksum of data we're about to PUT for debugging
+	sum := sha256.Sum256(data)
+	logger.Debug().Str("upload_sha256", hex.EncodeToString(sum[:])).Str("upload_url", respData.URL).Msg("uploading data to MMMSG")
+
+	putReq, err := http.NewRequestWithContext(ctx, "PUT", respData.URL, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("failed to create MMMSG PUT request: %w", err)
+	}
+	putReq.Header.Set("Content-Type", contentType)
+
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload data to MMMSG: %w", err)
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusOK && putResp.StatusCode != http.StatusCreated && putResp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(putResp.Body)
+		return "", fmt.Errorf("MMMSG PUT failed with status %d: %s", putResp.StatusCode, string(body))
+	}
+
+	logger.Info().Str("download_url", respData.URL).Msg("successfully uploaded file to MMMSG")
+
+	return respData.URL, nil
+}
+
+// encryptData encrypts data using AES-CTR with a random 128-bit key and zero IV.
+// Returns the encrypted data and the hex-encoded key.
+func encryptData(data []byte) ([]byte, string, error) {
+	key := make([]byte, 16) // 128-bit key
+	if _, err := rand.Read(key); err != nil {
+		return nil, "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Acrobits uses AES-CTR with zero IV for MMMSG
+	iv := make([]byte, aes.BlockSize)
+	stream := cipher.NewCTR(block, iv)
+
+	encrypted := make([]byte, len(data))
+	stream.XORKeyStream(encrypted, data)
+
+	return encrypted, hex.EncodeToString(key), nil
 }

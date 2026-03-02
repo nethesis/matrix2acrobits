@@ -45,6 +45,9 @@ type Config struct {
 	ExtAuthURL      string
 	ExtAuthTimeoutS int
 	ExtAuthTimeout  time.Duration
+
+	// Acrobits MMMSG configuration
+	MMMSGURL string
 }
 
 // NewConfig loads all configuration from environment variables with validation
@@ -155,6 +158,15 @@ func NewConfig() (*Config, error) {
 	}
 	cfg.ExtAuthTimeout = time.Duration(cfg.ExtAuthTimeoutS) * time.Second
 
+	// Load MMMSG configuration
+	cfg.MMMSGURL = os.Getenv("MMMSG_URL")
+	if cfg.MMMSGURL == "" {
+		cfg.MMMSGURL = "https://mmmsg.acrobits.net"
+		logger.Debug().Str("MMMSG_URL", cfg.MMMSGURL).Msg("using default MMMSG URL")
+	} else {
+		logger.Debug().Str("MMMSG_URL", cfg.MMMSGURL).Msg("MMMSG URL loaded from environment")
+	}
+
 	logger.Debug().Msg("configuration loading completed successfully")
 
 	return cfg, nil
@@ -175,6 +187,7 @@ func NewTestConfig() *Config {
 		CacheTTL:             time.Duration(defaultCacheTTLSeconds) * time.Second,
 		ExtAuthTimeoutS:      defaultExtAuthTimeoutS,
 		ExtAuthTimeout:       time.Duration(defaultExtAuthTimeoutS) * time.Second,
+		MMMSGURL:             "https://mmmsg.acrobits.net",
 	}
 }
 
