@@ -34,7 +34,7 @@ type ChatMatrixConfig struct {
 type ChatUser struct {
 	UserName      string   `json:"user_name"`
 	MainExtension string   `json:"main_extension"`
-	SubExtensions []string `json:"sub_extensions"`
+	Extensions    []string `json:"extensions"`
 }
 
 type ChatResponse struct {
@@ -46,7 +46,7 @@ type mockAuthUser struct {
 	Username      string
 	Password      string
 	MainExtension string
-	SubExtensions []string
+	Extensions    []string
 }
 
 var mockAuthUsers = []mockAuthUser{
@@ -54,13 +54,13 @@ var mockAuthUsers = []mockAuthUser{
 		Username:      "giacomo",
 		Password:      "Giacomo,1234",
 		MainExtension: "201",
-		SubExtensions: []string{"91201", "92201"},
+		Extensions:    []string{"91201", "92201"},
 	},
 	{
 		Username:      "mario",
 		Password:      "Mario,1234",
 		MainExtension: "202",
-		SubExtensions: []string{"91202"},
+		Extensions:    []string{"91202"},
 	},
 }
 
@@ -226,7 +226,7 @@ func handleMockChat(w http.ResponseWriter, r *http.Request) {
 			response.Users = append(response.Users, ChatUser{
 				UserName:      u.Username,
 				MainExtension: u.MainExtension,
-				SubExtensions: u.SubExtensions,
+				Extensions:    u.Extensions,
 			})
 		}
 	}
