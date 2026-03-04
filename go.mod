@@ -3,7 +3,7 @@ module github.com/nethesis/matrix2acrobits
 go 1.24.10
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
