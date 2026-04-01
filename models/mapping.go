@@ -42,7 +42,7 @@ type ChatMatrixConfig struct {
 type ChatUser struct {
 	UserName      string   `json:"user_name"`
 	MainExtension string   `json:"main_extension"`
-	SubExtensions []string `json:"sub_extensions"`
+	Extensions    []string `json:"extensions"`
 }
 
 // JWTClaims holds custom claims from the JWT token
