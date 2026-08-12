@@ -1,6 +1,6 @@
 module github.com/nethesis/matrix2acrobits
 
-go 1.24.10
+go 1.25.0
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -34,7 +34,7 @@ require (
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
