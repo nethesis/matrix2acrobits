@@ -1,5 +1,5 @@
 # Multi-stage build for matrix2acrobits
-FROM golang:1.24.13-alpine AS builder
+FROM golang:1.27.0-alpine AS builder
 WORKDIR /src
 
 # Cache go mod
